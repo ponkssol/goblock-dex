@@ -37,4 +37,4 @@ DFlow production has to be applied for and then approved. goblock issues a key w
 
 A quote compares PumpSwap, the bonding curve, Raydium, Meteora, and Orca in one step, then keeps the largest result. The coin receipt, the sell-back preview, the capped priority fee, the 5 bps link fee, and the key on `/api/v1/swap` are already in use.
 
-Automatic subscription billing comes later. The on-chain router is published on its own at https://github.com/ponkssol/goblock-program. Its `route` instruction forwards a swap to an allowed program and writes a `goblock:` log. Program `GBLK6CfBQXsTjYZqzpNs5gxYjp8r3NqnqZiohjuvxMww` is live on devnet. The homepage still calls the venue program directly.
+Automatic subscription billing comes later. The on-chain router is published on its own at https://github.com/ponkssol/goblock-program. Its `route` instruction forwards a swap to an allowed program and writes a `goblock:` log. Program `GBLK6CfBQXsTjYZqzpNs5gxYjp8r3NqnqZiohjuvxMww` is live on mainnet and devnet. The homepage still calls the venue program directly.
