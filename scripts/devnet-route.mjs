@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 
-const programId = new PublicKey("4gZQouUvsDc4zEd3msfnw9or4uxtSBxZejoy6XcsGTPb");
+const programId = new PublicKey("GBLK6CfBQXsTjYZqzpNs5gxYjp8r3NqnqZiohjuvxMww");
 const wallet = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync("Wallet.json", "utf8"))));
 const connection = new Connection(process.argv[2] ?? "https://api.devnet.solana.com", "confirmed");
 const recipient = Keypair.generate();
