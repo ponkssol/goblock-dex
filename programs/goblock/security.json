@@ -1,0 +1,8 @@
+{
+  "name": "goblock",
+  "logo": "https://files.catbox.moe/ijrtd5.png",
+  "description": "A direct Solana swap.",
+  "project_url": "https://github.com/gundrink/goblock-dex",
+  "source_code": "https://github.com/gundrink/goblock-dex",
+  "preferred_languages": ["en"]
+}

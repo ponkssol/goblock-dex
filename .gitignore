@@ -1,0 +1,11 @@
+node_modules
+.next
+target/
+tsconfig.tsbuildinfo
+.validator/
+.env
+.env.local
+keys/
+Wallet.json
+program-id/goblock-program-keypair.json
+program-id/goblock-upgrade-authority.json

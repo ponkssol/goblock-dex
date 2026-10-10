@@ -1,0 +1,6 @@
+[workspace]
+members = ["programs/goblock"]
+resolver = "2"
+
+[workspace.metadata.cli]
+solana = "4.3.0"
