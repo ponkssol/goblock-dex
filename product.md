@@ -1,40 +1,40 @@
 # goblock
 
-Swap SOL ke token Pump yang lebih murah dari Jupiter dan tetap cepat masuk blok. Fee goblock tidak dipotong dari swap biasa.
+Swap SOL to a Pump token for less than Jupiter, and still land quickly. A regular goblock swap takes no goblock fee.
 
-## Keunggulan
+## Edge
 
-- Koin baru tidak kena 50 bps Jupiter. Koin biasa tidak kena 10 bps. User hanya bayar fee pool.
-- DFlow juga 0 fee protokol. goblock menang di biaya total: satu langkah, tanpa hop tambahan, tip dibatasi.
-- Sebelum tanda tangan, trader melihat hasil kalau token langsung dijual lagi, plus status koin: masih di bonding curve atau sudah lulus, fee creator, mayhem, dan cashback. DFlow tidak menampilkan ini.
-- API produksi bisa dipakai siapa saja yang berlangganan. Kunci terbit tanpa formulir tunggu 2–5 hari seperti DFlow.
+- A new coin skips Jupiter's 50 bps. An ordinary coin skips Jupiter's 10 bps. The user pays the pool fee.
+- DFlow also charges no protocol fee. goblock is cheaper in total: one step, no extra hop, and a capped tip.
+- Before the signature, the trader sees what they get if the token is sold straight back, plus coin status: still on the bonding curve or graduated, the creator fee, mayhem, and cashback. DFlow does not show this.
+- Anyone who subscribes can use the production API. The key is issued without a 2–5 day application, unlike DFlow.
 
-Keunggulan harga hilang kalau swap dari beranda ikut dipotong.
+That price edge goes away if the homepage swap is charged too.
 
 ## Swap
 
-Satu langkah. Pool terbaik di antara PumpSwap, Raydium, dan Meteora. User menandatangani di wallet sendiri.
+One step. The best pool among PumpSwap, Raydium, Meteora, and Orca. The user signs in their own wallet.
 
-Priority fee mengikuti antrian slot saat itu, dengan batas atas 0,0001 SOL. Tip cukup untuk masuk satu sampai dua slot. Tip tidak dipakai sebagai sumber uang.
+The priority fee follows the slot queue at that moment, with a cap of 0.0001 SOL. The tip is enough to land within one or two slots. The tip is not used as revenue.
 
-## Dari mana goblock dibayar
+## Where goblock gets paid
 
-- Swap dari beranda, lewat `/api/swap`, tetap gratis dan tanpa kunci.
-- Swap lewat link brand memotong 5 bps. Setengah ke wallet brand, setengah ke kas goblock, hanya kalau transaksi berhasil. Untuk koin baru ini tetap jauh di bawah fee Jupiter.
-- Bot membayar langganan API, bukan potongan di swap trader. Halaman trader tidak berubah.
+- A homepage swap, through `/api/swap`, stays free and needs no key.
+- A brand-link swap takes 5 bps. Half goes to the brand wallet and half to the goblock treasury, and only if the transaction lands. On a new coin this stays well below Jupiter's fee.
+- A bot pays for an API subscription instead of a cut of the trader's swap. The trader page stays the same.
 
-Link brand: `/?brand=Nama&brandWallet=<alamat>`
+Brand link: `/?brand=Name&brandWallet=<address>`
 
-Kas goblock: `GOBLOCK_TREASURY`, atau upgrade authority kalau variabel itu kosong.
+goblock treasury: `GOBLOCK_TREASURY`, or `CwVD4jd6BeLAWZeEqMFerD8bLoQevSy5rmwawFTa3nuo` when that variable is empty.
 
 ## API
 
-`/api/v1/swap` wajib header `x-api-key`. Kunci yang berlaku ada di `GOBLOCK_API_KEYS`, dipisah koma. Paket nanti membedakan batas permintaan, bukan menambah fee swap.
+`/api/v1/swap` requires an `x-api-key` header. Live keys are listed in `GOBLOCK_API_KEYS`, separated by commas. Later plans differ by request cap, and they do not add a swap fee.
 
-DFlow production harus diajukan dan menunggu persetujuan. goblock menerbitkan kunci saat orang berlangganan.
+DFlow production has to be applied for and then approved. goblock issues a key when someone subscribes.
 
-## Kode saat ini
+## Current code
 
-Quote membandingkan PumpSwap, bonding curve, Raydium, Meteora, dan Orca dalam satu langkah, lalu memakai hasil terbesar. Resi koin, pratinjau jual-balik, priority fee berbatas, fee link 5 bps, dan kunci pada `/api/v1/swap` sudah dipakai.
+A quote compares PumpSwap, the bonding curve, Raydium, Meteora, and Orca in one step, then keeps the largest result. The coin receipt, the sell-back preview, the capped priority fee, the 5 bps link fee, and the key on `/api/v1/swap` are already in use.
 
-Pembayaran langganan otomatis menyusul. Router ada di `programs/goblock`: instruksi `route` meneruskan swap ke program yang diizinkan dan menulis log `goblock:`. Binary-nya sekitar 6 KB dan sudah hidup di devnet. Beranda masih memanggil program venue langsung, sampai program `4gZQou…` hidup di mainnet.
+Automatic subscription billing comes later. The on-chain router is published on its own at https://github.com/ponkssol/goblock-program. Its `route` instruction forwards a swap to an allowed program and writes a `goblock:` log. Program `4gZQouUvsDc4zEd3msfnw9or4uxtSBxZejoy6XcsGTPb` is live on mainnet. The homepage still calls the venue program directly.
