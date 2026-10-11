@@ -13,44 +13,176 @@ program_entrypoint!(process_instruction);
 no_allocator!();
 nostd_panic_handler!();
 
-const ROUTE: u8 = 0;
-const MAX_INNER: usize = 16;
-const MAX_ACCOUNTS: usize = 22;
+#[used]
+static SECURITY_TXT: &str = "\
+=======BEGIN SECURITY.TXT V1=======
+name: goblock
+project_url: https://github.com/ponkssol/goblock-dex
+contacts: link:https://github.com/ponkssol/goblock-program
+policy: https://github.com/ponkssol/goblock-program
+preferred_languages: en
+source_code: https://github.com/ponkssol/goblock-program
+logo: https://raw.githubusercontent.com/ponkssol/goblock-program/main/logo.png
+=======END SECURITY.TXT V1=======
+";
 
-/// `route` forwards whitelisted instructions and logs `goblock:`.
-///
-/// Data layout, little-endian:
-/// `u8 tag` (0), `u8 inner_count`, then for each inner instruction:
-/// `u8 program_index`, `u8 account_count`, `u8` account indexes,
-/// `u16 data_len`, instruction bytes.
-/// Account 0 is the signer. Every program id and account used by an inner
-/// instruction is included in this instruction's account list.
+const CHECKED: u8 = 1;
+const MAX_INNER: usize = 16;
+const MAX_ACCOUNTS: usize = 32;
+const BELOW_FLOOR: u32 = 1;
+const FEE_REJECTED: u32 = 2;
+const FEE_CAP: u64 = 2_000_000_000;
+
 fn process_instruction(
     program_id: &Address,
     accounts: &mut [AccountView],
     data: &[u8],
 ) -> ProgramResult {
+    core::hint::black_box(SECURITY_TXT);
     let signer = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
     if !signer.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
     }
-    if data.first() != Some(&ROUTE) {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-
+    let tag = data.first().copied().ok_or(ProgramError::InvalidInstructionData)?;
     log("goblock:");
-    let mut cursor = 1;
-    let inner_count = read_u8(data, &mut cursor)? as usize;
-    if inner_count > MAX_INNER {
+    if tag != CHECKED {
         return Err(ProgramError::InvalidInstructionData);
     }
-    for _ in 0..inner_count {
+    let mut cursor = 1;
+
+    let output_index = read_u8(data, &mut cursor)? as usize;
+    let min_out = read_u64(data, &mut cursor)?;
+    let mint = read_pubkey(data, &mut cursor)?;
+    let fee = read_u64(data, &mut cursor)?;
+    let treasury_fee = read_u64(data, &mut cursor)?;
+    let system_index = read_u8(data, &mut cursor)? as usize;
+    let treasury_index = read_u8(data, &mut cursor)? as usize;
+    let brand_index = read_u8(data, &mut cursor)? as usize;
+    if output_index == 0 || !accounts.get(output_index).is_some_and(|account| account.is_writable()) {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let before = token_amount(&accounts[output_index])?;
+    let pre_count = read_u8(data, &mut cursor)? as usize;
+    let post_count = read_u8(data, &mut cursor)? as usize;
+    if pre_count.saturating_add(post_count) == 0 || pre_count.saturating_add(post_count) > MAX_INNER {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    for _ in 0..pre_count {
         forward(program_id, accounts, data, &mut cursor)?;
     }
+    let output = &accounts[output_index];
+    let (found_mint, owner, after) = token_fields(output)?;
+    if found_mint != mint || owner != *signer.address().as_array() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let need = before.checked_add(min_out).ok_or(ProgramError::InvalidInstructionData)?;
+    if after < need {
+        return Err(ProgramError::Custom(BELOW_FLOOR));
+    }
+    for _ in 0..post_count {
+        forward(program_id, accounts, data, &mut cursor)?;
+    }
+    take_fee(accounts, fee, treasury_fee, system_index, treasury_index, brand_index)?;
     if cursor != data.len() {
         return Err(ProgramError::InvalidInstructionData);
     }
     Ok(())
+}
+
+fn take_fee(
+    accounts: &[AccountView],
+    fee: u64,
+    treasury_fee: u64,
+    system_index: usize,
+    treasury_index: usize,
+    brand_index: usize,
+) -> ProgramResult {
+    if fee == 0 {
+        return Ok(());
+    }
+    if fee > FEE_CAP || treasury_fee > fee {
+        return Err(ProgramError::Custom(FEE_REJECTED));
+    }
+    let system = accounts.get(system_index).ok_or(ProgramError::NotEnoughAccountKeys)?;
+    if system.address().as_array() != &[0; 32] {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    let treasury = accounts.get(treasury_index).ok_or(ProgramError::NotEnoughAccountKeys)?;
+    let brand = accounts.get(brand_index).ok_or(ProgramError::NotEnoughAccountKeys)?;
+    if !treasury.is_writable() || !brand.is_writable() || treasury_index == 0 || brand_index == 0 {
+        return Err(ProgramError::Custom(FEE_REJECTED));
+    }
+    let payer = &accounts[0];
+    if treasury_index == brand_index {
+        if treasury_fee != fee {
+            return Err(ProgramError::Custom(FEE_REJECTED));
+        }
+        return transfer(payer, treasury, fee, system);
+    }
+    if treasury_fee > 0 {
+        transfer(payer, treasury, treasury_fee, system)?;
+    }
+    let brand_fee = fee - treasury_fee;
+    if brand_fee > 0 {
+        transfer(payer, brand, brand_fee, system)?;
+    }
+    Ok(())
+}
+
+fn transfer(from: &AccountView, to: &AccountView, lamports: u64, system: &AccountView) -> ProgramResult {
+    let mut data = [0; 12];
+    data[0] = 2;
+    data[4..12].copy_from_slice(&lamports.to_le_bytes());
+    let metas = [
+        InstructionAccount::new(from.address(), true, true),
+        InstructionAccount::new(to.address(), true, false),
+    ];
+    let instruction = InstructionView {
+        program_id: system.address(),
+        data: &data,
+        accounts: &metas,
+    };
+    invoke_with_bounds::<2, _>(&instruction, &[from, to])
+}
+
+fn token_fields(account: &AccountView) -> Result<([u8; 32], [u8; 32], u64), ProgramError> {
+    let data = account.try_borrow()?;
+    if data.len() < 72 {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let mut mint = [0; 32];
+    let mut owner = [0; 32];
+    mint.copy_from_slice(&data[0..32]);
+    owner.copy_from_slice(&data[32..64]);
+    let mut amount = [0; 8];
+    amount.copy_from_slice(&data[64..72]);
+    Ok((mint, owner, u64::from_le_bytes(amount)))
+}
+
+fn token_amount(account: &AccountView) -> Result<u64, ProgramError> {
+    let data = account.try_borrow()?;
+    if data.len() < 72 {
+        return Ok(0);
+    }
+    let mut bytes = [0; 8];
+    bytes.copy_from_slice(&data[64..72]);
+    Ok(u64::from_le_bytes(bytes))
+}
+
+fn read_pubkey(data: &[u8], cursor: &mut usize) -> Result<[u8; 32], ProgramError> {
+    let bytes = data.get(*cursor..*cursor + 32).ok_or(ProgramError::InvalidInstructionData)?;
+    *cursor += 32;
+    let mut raw = [0; 32];
+    raw.copy_from_slice(bytes);
+    Ok(raw)
+}
+
+fn read_u64(data: &[u8], cursor: &mut usize) -> Result<u64, ProgramError> {
+    let bytes = data.get(*cursor..*cursor + 8).ok_or(ProgramError::InvalidInstructionData)?;
+    *cursor += 8;
+    let mut raw = [0; 8];
+    raw.copy_from_slice(bytes);
+    Ok(u64::from_le_bytes(raw))
 }
 
 fn forward(
@@ -111,7 +243,7 @@ fn read_u16(data: &[u8], cursor: &mut usize) -> Result<u16, ProgramError> {
     Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
 }
 
-const ALLOWED: [[u8; 32]; 12] = [
+const ALLOWED: [[u8; 32]; 16] = [
     [0; 32],
     TOKEN,
     TOKEN_2022,
@@ -122,7 +254,11 @@ const ALLOWED: [[u8; 32]; 12] = [
     RAYDIUM_V4,
     RAYDIUM_CLMM,
     RAYDIUM_CPMM,
+    RAYDIUM_LAUNCHLAB,
     METEORA_DLMM,
+    METEORA_DAMM_V1,
+    METEORA_DAMM_V2,
+    METEORA_DBC,
     ORCA_WHIRLPOOL,
 ];
 
@@ -169,4 +305,20 @@ const METEORA_DLMM: [u8; 32] = [
 const ORCA_WHIRLPOOL: [u8; 32] = [
     14, 3, 104, 95, 142, 144, 144, 83, 228, 88, 18, 28, 102, 245, 167, 106, 237, 199, 112, 106, 161, 28, 130, 248, 170,
     149, 42, 143, 43, 120, 121, 169,
+];
+const RAYDIUM_LAUNCHLAB: [u8; 32] = [
+    5, 4, 59, 149, 77, 202, 38, 225, 239, 145, 181, 44, 79, 143, 137, 175, 138, 111, 90, 200, 198, 33, 86, 241, 113,
+    207, 15, 33, 172, 81, 201, 34,
+];
+const METEORA_DAMM_V1: [u8; 32] = [
+    204, 248, 2, 212, 204, 204, 132, 215, 251, 33, 181, 247, 59, 73, 216, 26, 22, 197, 180, 200, 142, 227, 35, 148,
+    225, 201, 29, 53, 136, 204, 64, 128,
+];
+const METEORA_DAMM_V2: [u8; 32] = [
+    9, 45, 33, 53, 101, 122, 21, 156, 43, 135, 212, 182, 106, 112, 219, 142, 151, 82, 56, 159, 247, 106, 175, 32, 108,
+    237, 6, 58, 56, 249, 90, 237,
+];
+const METEORA_DBC: [u8; 32] = [
+    9, 96, 12, 165, 36, 247, 177, 183, 214, 204, 177, 195, 151, 58, 160, 51, 13, 25, 3, 218, 96, 28, 201, 181, 222,
+    227, 198, 98, 180, 202, 209, 73,
 ];

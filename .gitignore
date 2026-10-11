@@ -3,6 +3,7 @@ node_modules
 target/
 tsconfig.tsbuildinfo
 .validator/
+.verify-tmp/
 .env
 .env.local
 keys/

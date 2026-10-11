@@ -1,0 +1,10 @@
+{
+  "name": "@goblock/shared",
+  "private": true,
+  "version": "0.0.0",
+  "exports": {
+    "./quote": "./quote.ts",
+    "./tokens": "./tokens.ts",
+    "./units": "./units.ts"
+  }
+}
