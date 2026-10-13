@@ -5,9 +5,13 @@ import { siteOrigin } from "./site";
 const PAGES: [string, number, MetadataRoute.Sitemap[number]["changeFrequency"]][] = [
   ["/", 1, "weekly"],
   ["/trade", 0.9, "daily"],
-  ["/pricing", 0.8, "monthly"],
+  ["/checkout", 0.7, "monthly"],
   ["/docs", 0.8, "weekly"],
   ["/mcp", 0.7, "monthly"],
+  ["/buyback", 0.6, "daily"],
+  ["/litepaper", 0.6, "monthly"],
+  ["/dashboard", 0.6, "monthly"],
+  ["/waitlist", 0.5, "monthly"],
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {

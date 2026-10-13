@@ -12,7 +12,7 @@ export default function Quickstart() {
         <li>
           <b>Get a key</b>
           <span>
-            Pick a plan on <Link href="/pricing">Pricing</Link>.
+            Create one in the <Link href="/dashboard">Dashboard</Link>.
           </span>
         </li>
         <li>
@@ -33,7 +33,8 @@ export default function Quickstart() {
           server, for example <code>GOBLOCK_API_KEY</code>.
         </p>
         <Info>
-          Checkout is not live yet. Keys are issued by the goblock team for now. See{" "}
+          Sign in to the <Link href="/dashboard">Dashboard</Link> and press Create Key for a free key, at 10 requests a
+          minute. Builder and Starter are paid at <Link href="/checkout">checkout</Link> and add no goblock fee. See{" "}
           <Link href="/docs/authentication">Authentication</Link>.
         </Info>
       </Sec>

@@ -19,7 +19,17 @@ const PARAMS: [string, ReactNode, ReactNode][] = [
   ["priorityMode", "max | exact", <>How <code>priorityLamports</code> is used: as a ceiling, or as the exact fee.</>],
   ["priorityLamports", "number", <>From 1 to 10,000,000. Read only when <code>priorityMode</code> is set.</>],
   ["brand", "string", "Memo on the swap. Up to 32 letters, numbers, spaces, periods, or dashes."],
-  ["brandWallet", "string", <>Adds the 5 bps brand fee. See <Link href="/docs/brand-link">Brand link</Link>.</>],
+  [
+    "platformFeeBps",
+    "number",
+    <>Your fee, from 50 to 255. Needs <code>feeWallet</code>. See <Link href="/docs/plans#platform-fee">Your own fee</Link>.</>,
+  ],
+  ["feeWallet", "string", <>Wallet that receives your share of <code>platformFeeBps</code>.</>],
+  [
+    "brandWallet",
+    "string",
+    <>Adds the 5 bps brand fee on a monthly key. See <Link href="/docs/brand-link">Brand link</Link>.</>,
+  ],
 ];
 
 export default function QuoteSwap() {

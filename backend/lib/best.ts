@@ -6,7 +6,7 @@ import { quotePumpSwap } from "./pumpswap";
 import type { SwapOrderInput, SwapQuote, SwapReceipt, SwapVenue } from "./quote";
 import { quoteRaydium } from "./raydium";
 import { SOL_MINT, USDC } from "./tokens";
-import { brandFee } from "./fees";
+import { chargeFor, feeOf } from "./fees";
 import { buildSwapTransaction, outputAfterFee } from "./trade";
 
 const VENUE_BUDGET_MS = 4_000;
@@ -138,7 +138,8 @@ function previewOf(input: SwapOrderInput): SwapOrderInput {
 }
 
 function priceKey(input: SwapOrderInput): string {
-  return [input.inputMint, input.outputMint, input.amount, input.slippageBps, input.brandWallet ?? "", input.brand ?? ""].join("|");
+  const fee = input.fee ? JSON.stringify(input.fee) : "";
+  return [input.inputMint, input.outputMint, input.amount, input.slippageBps, fee, input.brand ?? ""].join("|");
 }
 
 function readPrice(key: string): SwapQuote | null {
@@ -255,7 +256,7 @@ function planFromLegs(
       outAmount: settled.out.toString(),
       minOutAmount: settled.min.toString(),
       maxInAmount: input.amount,
-      feeBps: settled.fee.isZero() ? 0 : 5,
+      feeBps: settled.fee.isZero() ? 0 : chargeFor(input).bps,
       feeAmount: settled.fee.toString(),
       route,
       pool: legs.map((leg) => leg.pool).join(","),
@@ -289,8 +290,8 @@ async function materialize(input: SwapOrderInput, plan: Plan): Promise<SwapQuote
     instructions,
     lookupTables,
     brand: input.brand,
-    brandWallet: input.brandWallet,
     fee: new BN(quote.feeAmount),
+    charge: chargeFor(input),
     outputMint: input.outputMint,
     minOut: new BN(quote.minOutAmount),
   });
@@ -308,21 +309,22 @@ function pair(input: SwapOrderInput, amount: BN): SwapOrderInput {
 
 function tradable(input: SwapOrderInput): BN {
   const amount = new BN(input.amount);
-  if (input.inputMint !== SOL_MINT || !input.brandWallet) return amount;
-  const fee = brandFee(amount, true);
-  return fee.gte(amount) ? new BN(0) : amount.sub(fee);
+  if (input.inputMint !== SOL_MINT) return amount;
+  const fee = feeOf(amount, chargeFor(input).bps);
+  return fee.gtn(0) && fee.gte(amount) ? new BN(0) : amount.sub(fee);
 }
 
 function inputFee(input: SwapOrderInput): BN {
   if (input.inputMint !== SOL_MINT) return new BN(0);
-  return brandFee(new BN(input.amount), Boolean(input.brandWallet));
+  return feeOf(new BN(input.amount), chargeFor(input).bps);
 }
 
 function settle(gross: BN, minGross: BN, input: SwapOrderInput): { out: BN; min: BN; fee: BN } {
   const outputIsSol = input.outputMint === SOL_MINT && input.inputMint !== SOL_MINT;
   if (!outputIsSol) return { out: gross, min: minGross, fee: inputFee(input) };
-  const { outAmount, outputFee } = outputAfterFee(gross, true, Boolean(input.brandWallet));
-  const minFee = brandFee(minGross, Boolean(input.brandWallet));
+  const bps = chargeFor(input).bps;
+  const { outAmount, outputFee } = outputAfterFee(gross, true, bps);
+  const minFee = feeOf(minGross, bps);
   const min = minGross.gt(minFee) ? minGross.sub(minFee) : new BN(0);
   return { out: outAmount, min, fee: outputFee };
 }

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { PLANS } from "@/lib/plans";
+import { PLANS, planHref } from "@/lib/plans";
 import { m } from "../motion";
 import { Reveal } from "../reveal";
 import { SiteFoot } from "../site-foot";
@@ -11,7 +11,8 @@ import "../pages.css";
 
 export const metadata = pageMeta({
   title: "Pricing · goblock",
-  description: "Pay goblock by the month with no swap fee, or skip the bill and pay 5 bps on each landed swap.",
+  description:
+    "Start with a free Solana swap API key that charges 0 to 5 bps on pool swaps, or pay by the month and add no goblock fee.",
   path: "/pricing",
   keywords: ["Solana swap API pricing", "swap API plans", "DEX aggregator API"],
 });
@@ -25,26 +26,51 @@ const INCLUDED = [
   ["Minimum on chain", "The route checks the output account gained at least minOutAmount.", "M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7zM9 12l2 2 4-4"],
 ];
 
+type PublicConfig = {
+  plans?: { freeRpm: number; builderUsd: number; builderRpm: number; starterUsd: number; starterRpm: number };
+  fees?: {
+    stableBps: number;
+    majorBps: number;
+    otherBps: number;
+    curveBps: number;
+    brandBps: number;
+    platformMinBps: number;
+    platformMaxBps: number;
+  };
+};
+
+async function publicConfig(): Promise<PublicConfig | null> {
+  try {
+    const response = await fetch(`${process.env.BACKEND_URL ?? "http://127.0.0.1:4000"}/api/config`, { cache: "no-store" });
+    if (!response.ok) return null;
+    return (await response.json()) as PublicConfig;
+  } catch {
+    return null;
+  }
+}
+
 const FAQ = [
   [
     "Does a plan add a fee to my users' swaps?",
-    "Not on a monthly plan: those keys return swapFeeBps 0. Pay per swap adds 5 bps to each landed swap instead of a bill, and half of it goes to your wallet.",
+    "Not on a monthly plan. The free key adds a fee on the SOL side of the swap: 0 bps with a stablecoin or an LST, 3 bps with a major token, 5 bps with any other pool token, and 20 bps on a bonding curve. Pairs without SOL pay nothing.",
+  ],
+  [
+    "Can I charge my own fee?",
+    "Yes. Send platformFeeBps from 50 to 255 with a feeWallet. On a monthly plan your wallet gets 90%. On the free key, goblock keeps 10% or the free-key fee for that pair, whichever is larger.",
   ],
   [
     "What counts as a request?",
     "Each call to /api/v1/swap. A quote and a quote with a transaction are both one request.",
   ],
   [
-    "How do I get a key today?",
-    "Checkout is not live yet. Keys are issued by the goblock team for now, and every active key shares one allowlist until per-plan caps ship.",
+    "How do I get a key?",
+    "A free key comes from the API Dashboard or from POST /api/v1/key, and it is limited to 10 requests a minute. Builder and Starter are paid at checkout in SOL or USDC. Enterprise is arranged with the goblock team.",
   ],
   [
     "Can I swap without a plan?",
     "Yes. The Trade page is free and needs no key. Plans are for software that calls the API.",
   ],
 ];
-
-const FEATURED = PLANS.find((plan) => plan.featured) ?? PLANS[0];
 
 function Check() {
   return (
@@ -54,7 +80,55 @@ function Check() {
   );
 }
 
-export default function PricingPage() {
+export default async function PricingPage() {
+  const config = await publicConfig();
+  const plans = config?.plans;
+  const fees = config?.fees;
+  const shown = PLANS.map((plan) => {
+    if (!plans || !fees) return plan;
+    if (plan.id === "free") {
+      return {
+        ...plan,
+        cap: `${plans.freeRpm} requests / min`,
+        perks: [
+          `${fees.stableBps} bps on stablecoins and LSTs`,
+          `${fees.majorBps} bps on major tokens, ${fees.otherBps} bps on other pool tokens`,
+          `${fees.curveBps} bps on bonding-curve coins`,
+          "Add your own fee on top",
+        ],
+      };
+    }
+    if (plan.id === "builder") return { ...plan, price: `$${plans.builderUsd}`, cap: `${plans.builderRpm} requests / min` };
+    if (plan.id === "starter") return { ...plan, price: `$${plans.starterUsd}`, cap: `${plans.starterRpm} requests / min` };
+    return plan;
+  });
+  const featured = shown.find((plan) => plan.featured) ?? shown[0];
+  const brand = fees?.brandBps ?? 5;
+  const poolLow = fees ? Math.min(fees.stableBps, fees.majorBps, fees.otherBps) : 0;
+  const poolHigh = fees ? Math.max(fees.stableBps, fees.majorBps, fees.otherBps) : 5;
+  const poolSpan = poolLow === poolHigh ? `${poolLow} bps` : `${poolLow} to ${poolHigh} bps`;
+  const faq = FAQ.map(([question, answer]) => {
+    if (!fees || !plans) return [question, answer] as const;
+    if (question.startsWith("Does a plan")) {
+      return [
+        question,
+        `Not on a monthly plan. The free key adds a fee on the SOL side of the swap: ${fees.stableBps} bps with a stablecoin or an LST, ${fees.majorBps} bps with a major token, ${fees.otherBps} bps with any other pool token, and ${fees.curveBps} bps on a bonding curve. Pairs without SOL pay nothing.`,
+      ] as const;
+    }
+    if (question.startsWith("Can I charge")) {
+      return [
+        question,
+        `Yes. Send platformFeeBps from ${fees.platformMinBps} to ${fees.platformMaxBps} with a feeWallet. On a monthly plan your wallet gets 90%. On the free key, goblock keeps 10% or the free-key fee for that pair, whichever is larger.`,
+      ] as const;
+    }
+    if (question.startsWith("How do I get")) {
+      return [
+        question,
+        `A free key comes from the API Dashboard or from POST /api/v1/key, and it is limited to ${plans.freeRpm} requests a minute. Builder is $${plans.builderUsd} for ${plans.builderRpm} requests a minute. Starter is $${plans.starterUsd} for ${plans.starterRpm} requests a minute. Enterprise is arranged with the goblock team.`,
+      ] as const;
+    }
+    return [question, answer] as const;
+  });
   return (
     <main className="stage home subpage">
       <script
@@ -63,7 +137,7 @@ export default function PricingPage() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "FAQPage",
-            mainEntity: FAQ.map(([question, answer]) => ({
+            mainEntity: faq.map(([question, answer]) => ({
               "@type": "Question",
               name: question,
               acceptedAnswer: { "@type": "Answer", text: answer },
@@ -84,13 +158,13 @@ export default function PricingPage() {
                 Pricing
               </span>
               <h1 {...m("rise", 140)}>
-                Pay by the month.
+                Start free.
                 <br />
-                Or by the swap.
+                Pay to drop the fee.
               </h1>
               <p {...m("rise", 220)}>
-                Monthly plans add no goblock fee to the swap your users sign. Pay per swap has no bill: each landed swap
-                pays 5 bps, and half of it goes to your wallet.
+                The free key has no bill and charges {poolSpan} on pool swaps. Monthly plans add no goblock fee to the
+                swap your users sign.
               </p>
               <div className="j-actions" {...m("rise", 300)}>
                 <a className="j-go" href="#plans">
@@ -116,18 +190,18 @@ export default function PricingPage() {
             <div className="m-chat" {...m("pop", 260)}>
               <div className="m-chat-tab">
                 <i className="p-bill-dot" />
-                {FEATURED.name} plan
+                {featured.name} plan
                 <em>Recommended</em>
               </div>
               <div className="m-chat-body p-bill">
                 <div className="p-bill-price">
-                  <strong>{FEATURED.price}</strong>
-                  <span>{FEATURED.period}</span>
+                  <strong>{featured.price}</strong>
+                  <span>{featured.period}</span>
                 </div>
                 <dl>
                   <div>
                     <dt>Request cap</dt>
-                    <dd>{FEATURED.cap}</dd>
+                    <dd>{featured.cap}</dd>
                   </div>
                   <div>
                     <dt>Venues in one quote</dt>
@@ -135,7 +209,7 @@ export default function PricingPage() {
                   </div>
                   <div>
                     <dt>Brand link fee</dt>
-                    <dd>5 bps, optional</dd>
+                    <dd>{brand} bps, optional</dd>
                   </div>
                 </dl>
                 <div className="m-approve">
@@ -150,7 +224,7 @@ export default function PricingPage() {
           </section>
 
           <div className="p-plans" id="plans">
-            {PLANS.map((plan, index) => (
+            {shown.map((plan, index) => (
               <article
                 key={plan.id}
                 className={plan.featured ? "p-plan featured" : "p-plan"}
@@ -177,7 +251,10 @@ export default function PricingPage() {
                       </li>
                     ))}
                   </ul>
-                  <Link className={plan.featured ? "p-btn dark" : "p-btn line"} href="/docs/authentication">
+                  <Link
+                    className={plan.featured ? "p-btn dark" : "p-btn line"}
+                    href={planHref(plan.id)}
+                  >
                     {plan.cta}
                   </Link>
                 </div>
@@ -185,8 +262,9 @@ export default function PricingPage() {
             ))}
           </div>
           <p className="p-note">
-            Checkout is not live yet. Keys are issued by hand for now, and request caps and Pay per swap start when
-            checkout ships.
+            Free keys come from the <Link href="/dashboard">API Dashboard</Link>. Builder and Starter are paid at{" "}
+            <Link href="/checkout">checkout</Link> in SOL or USDC, and the request cap starts when the key is issued.
+            Enterprise is arranged with the goblock team.
           </p>
         </div>
       </Reveal>
@@ -240,7 +318,7 @@ export default function PricingPage() {
               <strong>5 bps</strong>
               <b>Brand link</b>
               <p>
-                Share <code>/?brand=Name&amp;brandWallet=…</code>. Each landed swap pays 5 bps, half to your wallet and
+                Share <code>/?brand=Name&amp;brandWallet=…</code>. Each landed swap pays {brand} bps, half to your wallet and
                 half to the goblock treasury.
               </p>
               <Link className="p-btn line" href="/docs/brand-link" style={{ width: "fit-content", marginTop: 8 }}>
@@ -258,7 +336,7 @@ export default function PricingPage() {
             <h2 {...m("rise", 80)}>Before you subscribe.</h2>
           </div>
           <div className="p-faq" {...m("rise", 160)}>
-            {FAQ.map(([question, answer]) => (
+            {faq.map(([question, answer]) => (
               <details key={question}>
                 <summary>{question}</summary>
                 <p>{answer}</p>

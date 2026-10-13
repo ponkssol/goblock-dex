@@ -6,6 +6,7 @@ tsconfig.tsbuildinfo
 .verify-tmp/
 .env
 .env.local
+.data/
 keys/
 Wallet.json
 program-id/goblock-program-keypair.json

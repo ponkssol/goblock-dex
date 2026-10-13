@@ -160,6 +160,8 @@
   font-size: 14px;
   line-height: 1.75;
   tab-size: 2;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-width: thin;
 }
 
 .c-block.slim .c-body {
@@ -181,6 +183,30 @@
 
 .c-dim {
   color: #5f6a72;
+}
+
+@media (max-width: 560px) {
+  .c-tabs {
+    padding: 4px 6px 0;
+  }
+
+  .c-tabs button {
+    padding: 0 12px;
+  }
+
+  .c-copy {
+    position: absolute;
+    top: calc(100% + 12px);
+    right: 12px;
+    z-index: 1;
+    margin: 0;
+    background: #0e141a;
+  }
+
+  .c-body {
+    padding: 58px 20px 26px;
+    font-size: 13px;
+  }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -976,8 +1002,8 @@
   margin: 0 0 16px;
 }
 
-.d-sec a,
-.d-steps a {
+.d-sec a:not(.p-btn),
+.d-steps a:not(.p-btn) {
   color: var(--gold);
 }
 
@@ -2028,6 +2054,11 @@
     display: none;
   }
 
+  .m-config .c-copy {
+    position: static;
+    margin-bottom: 10px;
+  }
+
   .m-config .c-block {
     margin-top: 0;
   }
@@ -2036,4 +2067,345 @@
     margin-top: 10px;
     border-radius: 24px;
   }
+}
+
+@media (max-width: 560px) {
+  .m-hero {
+    padding: 40px 18px 22px;
+    border-radius: 26px;
+  }
+
+  .m-chat-tab {
+    width: 82%;
+  }
+
+  .p-bill-price strong {
+    font-size: 44px;
+  }
+
+  .p-bill dl div {
+    font-size: 13.5px;
+  }
+
+  .p-bill dt,
+  .p-bill dd {
+    white-space: nowrap;
+  }
+
+  .p-bill .m-approve {
+    flex-wrap: wrap;
+  }
+
+  .m-config .c-body {
+    padding-top: 24px;
+  }
+
+  .m-cards pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Checkout */
+
+.s-sec.c-checkout {
+  padding-top: 36px;
+  padding-bottom: 72px;
+}
+
+.s-sec.c-checkout h1 {
+  margin: 18px 0 0;
+  color: #f4f6f5;
+  font-size: clamp(36px, 4.2vw, 64px);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 0.98;
+}
+
+.c-pay {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.82fr) minmax(0, 1.18fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.c-pay-plans {
+  display: grid;
+  gap: 12px;
+}
+
+.c-pay-plan {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 18px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 22px;
+  background: #111a22;
+  color: #f4f6f5;
+  text-align: left;
+  cursor: pointer;
+}
+
+.c-pay-plan.on {
+  border-color: #c7f284;
+}
+
+.c-pay-plan span,
+.c-pay-card small {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #c7f284;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.c-pay-plan i {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #c7f284;
+  color: #0b1014;
+  font-style: normal;
+  font-size: 11px;
+}
+
+.c-pay-plan strong {
+  font-family: var(--font-display), var(--font-sans), sans-serif;
+  font-size: 32px;
+  font-weight: 650;
+  letter-spacing: -0.04em;
+}
+
+.c-pay-plan strong small {
+  margin-left: 6px;
+  color: #8f989f;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.c-pay-plan em {
+  color: #8f989f;
+  font-style: normal;
+  font-size: 14px;
+}
+
+.c-pay-card {
+  display: grid;
+  gap: 16px;
+  padding: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle, rgba(255, 255, 255, 0.045) 1px, transparent 1.3px),
+    #111a22;
+  background-size: 11px 11px, auto;
+}
+
+.c-pay-card h2 {
+  margin: 0;
+  font-size: clamp(28px, 3vw, 40px);
+}
+
+.c-pay-lead,
+.c-pay-fine,
+.c-pay-card p {
+  margin: 0;
+  color: #a3abb1;
+  font-size: 15px;
+  line-height: 23px;
+}
+
+.c-pay-assets {
+  display: flex;
+  gap: 8px;
+}
+
+.c-pay-assets button {
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: transparent;
+  color: #c9d0d4;
+  cursor: pointer;
+}
+
+.c-pay-assets button.on {
+  border-color: #c7f284;
+  background: #c7f284;
+  color: #0b1014;
+}
+
+.c-pay-assets button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.c-pay-amount {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0;
+  color: #f4f6f5;
+  font-family: var(--font-display), var(--font-sans), sans-serif;
+  font-size: clamp(36px, 4vw, 52px);
+  font-weight: 650;
+  letter-spacing: -0.04em;
+}
+
+.c-pay-amount span,
+.c-pay-amount s {
+  color: #8f989f;
+  font-family: var(--font-sans), sans-serif;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.c-pay-off {
+  margin: -8px 0 0;
+  color: #c7f284;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.c-pay-code {
+  display: flex;
+  gap: 8px;
+}
+
+.c-pay-code input {
+  flex: 1;
+  min-width: 0;
+  height: 46px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  outline: 0;
+  background: #151e26;
+  color: #f4f6f5;
+  font: inherit;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.c-pay-code input:focus {
+  border-color: rgba(199, 242, 132, 0.5);
+}
+
+.c-pay-code button {
+  flex: none;
+  height: 46px;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: transparent;
+  color: #f4f6f5;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.c-pay-code button:hover {
+  border-color: rgba(199, 242, 132, 0.5);
+  color: #c7f284;
+}
+
+.c-pay-card dl {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.c-pay-card dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.09);
+}
+
+.c-pay-card dt {
+  color: #8f989f;
+}
+
+.c-pay-card dd {
+  margin: 0;
+}
+
+.c-pay-card a {
+  color: #f4f6f5;
+}
+
+.c-pay-card .p-btn {
+  width: 100%;
+}
+
+.c-pay-card button.p-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.c-pay-refresh {
+  justify-self: center;
+  border: 0;
+  background: none;
+  color: #8f989f;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.c-pay-error {
+  margin: 0;
+  color: #ffb4a8;
+  font-size: 14px;
+  line-height: 21px;
+}
+
+.c-pay-secret {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: #0b1014;
+}
+
+.c-pay-secret code {
+  flex: 1;
+  overflow-wrap: anywhere;
+  color: #c7f284;
+  font-size: 13px;
+}
+
+.c-pay-secret button {
+  flex: none;
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: #c7f284;
+  color: #0b1014;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+@media (max-width: 800px) {
+  .c-pay {
+    grid-template-columns: 1fr;
+  }
+}
+
+.w-join {
+  max-width: 520px;
+}
+
+.w-join form {
+  display: grid;
+  gap: 14px;
 }

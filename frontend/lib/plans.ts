@@ -12,14 +12,14 @@ export type Plan = {
 
 export const PLANS: Plan[] = [
   {
-    id: "fee",
-    name: "Pay per swap",
-    price: "5 bps",
-    period: "/ swap",
-    cap: "No monthly bill",
-    detail: "Apps that would rather share swap fees than pay a bill.",
-    perks: ["Half of the fee to your wallet", "Paid only on a landed swap", "All five venues", "Quote and transaction in one call"],
-    cta: "Start with Fees",
+    id: "free",
+    name: "Free",
+    price: "$0",
+    period: "/ month",
+    cap: "10 requests / min",
+    detail: "A key in one call. A small fee on the SOL side of the swap pays for it.",
+    perks: ["0 bps on stablecoins and LSTs", "3 to 5 bps on pool tokens", "20 bps on bonding-curve coins", "Add your own fee on top"],
+    cta: "Get a Free Key",
   },
   {
     id: "builder",
@@ -53,3 +53,9 @@ export const PLANS: Plan[] = [
     cta: "Contact us",
   },
 ];
+
+export function planHref(id: string) {
+  if (id === "builder" || id === "starter") return `/checkout?plan=${id}`;
+  if (id === "free") return "/dashboard";
+  return "/docs/plans";
+}

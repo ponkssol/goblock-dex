@@ -2,6 +2,7 @@ import { PublicKey, type TransactionInstruction } from "@solana/web3.js";
 import { ActivationType, CpAmm, getCurrentPoint, getTokenProgram, SwapMode } from "@meteora-ag/cp-amm-sdk";
 import { AmmImpl, PROGRAM_ID as DAMM_V1_PROGRAM_ID } from "@meteora-ag/dynamic-amm-sdk";
 import BN from "bn.js";
+import { chargeFor } from "./fees";
 import type { SwapOrderInput, SwapQuote } from "./quote";
 import { SOL_MINT } from "./tokens";
 import {
@@ -37,11 +38,11 @@ export function quoteDammV1(input: SwapOrderInput): Promise<SwapQuote> {
 
 async function quoteDamm(input: SwapOrderInput, version: "v1" | "v2"): Promise<SwapQuote> {
   const amount = new BN(input.amount);
-  const linkFee = input.assemble !== false && Boolean(input.brandWallet);
-  const legs = solFees(input.inputMint, input.outputMint, amount, linkFee);
+  const charge = chargeFor(input);
+  const legs = solFees(input.inputMint, input.outputMint, amount, charge.bps);
   const quoted = version === "v2" ? await quoteV2(input, legs.swapIn) : await quoteV1(input, legs.swapIn);
-  const { outAmount, outputFee } = outputAfterFee(quoted.gross, legs.outputIsSol, linkFee);
-  const minOutAmount = outputAfterFee(quoted.min, legs.outputIsSol, linkFee).outAmount;
+  const { outAmount, outputFee } = outputAfterFee(quoted.gross, legs.outputIsSol, charge.bps);
+  const minOutAmount = outputAfterFee(quoted.min, legs.outputIsSol, charge.bps).outAmount;
   const fee = legs.inputFee.add(outputFee);
   const [inputMintDecimals, outputMintDecimals, feeText] = await Promise.all([
     mintDecimals(input.inputMint),
@@ -60,7 +61,7 @@ async function quoteDamm(input: SwapOrderInput, version: "v1" | "v2"): Promise<S
     programId: version === "v2" ? DAMM_V2_PROGRAM_ID : String(DAMM_V1_PROGRAM_ID),
     venue: "Meteora",
     receipt: venueReceipt("Meteora"),
-    feeBps: fee.isZero() ? 0 : 5,
+    feeBps: fee.isZero() ? 0 : charge.bps,
     feeAmount: fee.toString(),
     networkFeeLamports: feeText,
     memo: input.brand,
@@ -78,8 +79,8 @@ async function quoteDamm(input: SwapOrderInput, version: "v1" | "v2"): Promise<S
     user,
     instructions,
     brand: input.brand,
-    brandWallet: input.brandWallet,
     fee,
+    charge,
     outputMint: input.outputMint,
     minOut: minOutAmount,
   });

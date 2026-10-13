@@ -21,17 +21,23 @@ The priority fee follows the slot queue at that moment, with a cap of 0.0001 SOL
 
 - A homepage swap, through `/api/swap`, stays free and needs no key.
 - A brand-link swap takes 5 bps. Half goes to the brand wallet and half to the goblock treasury, and only if the transaction lands. On a new coin this stays well below Jupiter's fee.
-- A bot pays for an API subscription instead of a cut of the trader's swap. The trader page stays the same.
+- A free API key pays a fee in SOL on the SOL side of the swap: 0 bps with a stablecoin or an LST, 3 bps with a major token, 5 bps with any other pool token, and 20 bps on a bonding curve. Pairs without SOL pay nothing. Each rate sits below Jupiter's for the same pair.
+- A bot on a monthly plan pays the subscription instead of a cut of the trader's swap. The trader page stays the same.
+- An integrator can add `platformFeeBps` (50–255) with `feeWallet`. goblock keeps 10%, or the free-key fee for that pair when that is larger.
 
 Brand link: `/?brand=Name&brandWallet=<address>`
 
-goblock treasury: `GOBLOCK_TREASURY`, or `CwVD4jd6BeLAWZeEqMFerD8bLoQevSy5rmwawFTa3nuo` when that variable is empty.
+goblock treasury: `GOBLOCK_TREASURY`, or the buyback vault PDA `7bo6FFvvfPfzcBn7tow8hhUrtXmYboeoqCaNmHBqqsaF` when that variable is empty.
+
+## Buyback
+
+Fees collect in the vault PDA (seed `vault`) of the goblock program. Once new fees reach 0.1 SOL, anyone can call `distribute`: 60% goes to the team wallet `CwVD4jd6BeLAWZeEqMFerD8bLoQevSy5rmwawFTa3nuo`, and 40% is held in the vault to buy $GOBLOCK on the Pump curve or PumpSwap. The program burns every token it buys in the same transaction. The team wallet sets the $GOBLOCK mint once at `/buyback/settings`, and it is locked after that. The public page is `/buyback`.
 
 ## API
 
-`/api/v1/swap` requires an `x-api-key` header. Live keys are listed in `GOBLOCK_API_KEYS`, separated by commas. Later plans differ by request cap, and they do not add a swap fee.
+`/api/v1/swap` requires an `x-api-key` header. Monthly keys are listed in `GOBLOCK_API_KEYS`, separated by commas, and add no swap fee. Free keys come from `POST /api/v1/key`: each one is signed with `GOBLOCK_KEY_SECRET`, so nothing is stored, and a free key can be refused by listing it in `GOBLOCK_BLOCKED_KEYS`.
 
-DFlow production has to be applied for and then approved. goblock issues a key when someone subscribes.
+DFlow production has to be applied for and then approved. goblock hands out a free production key in one call.
 
 ## Current code
 

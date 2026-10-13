@@ -81,12 +81,20 @@ export function Info({ children }: { children: ReactNode }) {
   );
 }
 
-export function Endpoint({ path }: { path: string }) {
+export function Endpoint({
+  path,
+  method = "GET",
+  note = "x-api-key required",
+}: {
+  path: string;
+  method?: string;
+  note?: string;
+}) {
   return (
     <div className="d-endpoint">
-      <span className="d-method">GET</span>
+      <span className="d-method">{method}</span>
       {path}
-      <small>x-api-key required</small>
+      <small>{note}</small>
     </div>
   );
 }

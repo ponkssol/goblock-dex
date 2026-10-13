@@ -275,7 +275,7 @@ button {
   rotate: 30deg;
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 1536px) {
   .claude {
     justify-content: center;
     width: 38px;
@@ -316,7 +316,7 @@ button {
   height: 38px;
 }
 
-@media (min-width: 861px) {
+@media (min-width: 1181px) {
   .stage > .nav .links {
     gap: 32px;
   }
@@ -346,6 +346,12 @@ button {
     background: var(--brand);
     box-shadow: 0 0 8px rgba(199, 242, 132, 0.9);
     transform: translateX(-50%);
+  }
+}
+
+@media (min-width: 1181px) and (max-width: 1360px) {
+  .stage > .nav .links {
+    gap: 20px;
   }
 }
 
@@ -1085,6 +1091,22 @@ button {
   color: var(--muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 480px) {
+  .stat-head,
+  .stat-row {
+    grid-template-columns: minmax(40px, 0.55fr) repeat(4, minmax(0, 1fr));
+    column-gap: 6px;
+  }
+
+  .stat-head {
+    font-size: 9.5px;
+  }
+
+  .stat-row span {
+    font-size: 11.5px;
+  }
 }
 
 button.icon {
@@ -3343,26 +3365,7 @@ a.plan.featured > span {
   padding: 0 18px;
 }
 
-@media (max-width: 860px) {
-  .nav {
-    height: 60px;
-    padding: 0 14px;
-  }
-
-  .stage > .nav,
-  .stage > .nav.scrolled {
-    height: 60px;
-    padding-inline: 16px;
-  }
-
-  .stage > .nav .lockup img {
-    height: 22px;
-  }
-
-  .stage > .nav .wallet {
-    height: 36px;
-  }
-
+@media (max-width: 1180px) {
   .nav-toggle {
     display: grid;
     order: 2;
@@ -3372,21 +3375,6 @@ a.plan.featured > span {
   .wallet-slot {
     order: 3;
     margin-left: 8px;
-  }
-
-  .wallet {
-    height: 36px;
-    padding: 0 12px;
-    font-size: 13px;
-  }
-
-  .wallet-slot {
-    gap: 8px;
-  }
-
-  .claude {
-    width: 36px;
-    height: 36px;
   }
 
   .links {
@@ -3416,6 +3404,42 @@ a.plan.featured > span {
     justify-content: flex-start;
     height: 44px;
     border-radius: 12px;
+  }
+}
+
+@media (max-width: 860px) {
+  .nav {
+    height: 60px;
+    padding: 0 14px;
+  }
+
+  .stage > .nav,
+  .stage > .nav.scrolled {
+    height: 60px;
+    padding-inline: 16px;
+  }
+
+  .stage > .nav .lockup img {
+    height: 22px;
+  }
+
+  .stage > .nav .wallet {
+    height: 36px;
+  }
+
+  .wallet {
+    height: 36px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+
+  .wallet-slot {
+    gap: 8px;
+  }
+
+  .claude {
+    width: 36px;
+    height: 36px;
   }
 
   .shell {
@@ -3579,51 +3603,15 @@ a.plan.featured > span {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .page-motion .stage > :not(.nav, .shade) {
-    animation: page-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) backwards;
-  }
-
-  .page-motion .stage > :not(.nav, .shade):nth-child(3) {
-    animation-delay: 70ms;
-  }
-
-  .page-motion .stage > :not(.nav, .shade):nth-child(n + 4) {
-    animation-delay: 140ms;
-  }
-
-  .page-motion .stage > .nav {
-    animation: page-nav 0.5s ease backwards;
-  }
-
-  .page-motion.out .stage > * {
-    animation: page-out 0.26s cubic-bezier(0.55, 0, 1, 0.45) forwards;
-    pointer-events: none;
-  }
-
-  .page-motion.out .stage > .nav {
-    animation: none;
+  .page-motion {
+    animation: page-in 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 }
 
 @keyframes page-in {
   from {
     opacity: 0;
-    transform: translateY(26px) scale(0.985);
-    filter: blur(10px);
-  }
-}
-
-@keyframes page-out {
-  to {
-    opacity: 0;
-    transform: translateY(-16px) scale(0.985);
-    filter: blur(8px);
-  }
-}
-
-@keyframes page-nav {
-  from {
-    opacity: 0;
+    transform: translateY(84px) scale(0.96);
   }
 }
 

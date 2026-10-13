@@ -11,6 +11,10 @@ export default function BrandLink() {
           Add <code>brandWallet</code>, and optionally <code>brand</code>, to a quote request. The swap then carries a
           5 bps fee.
         </p>
+        <Info>
+          The free key shares fees through <code>platformFeeBps</code> and <code>feeWallet</code> instead, and turns
+          down <code>brandWallet</code>.
+        </Info>
       </Sec>
 
       <Sec id="site" title="On the site">

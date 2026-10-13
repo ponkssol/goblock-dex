@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 import { CodeBlock, type Snippet } from "./code-block";
 import { FLOW, FlowList, FlowStage } from "./flow";
+import { LaserInfo } from "./laser-stream";
 import { m } from "./motion";
 import { Reveal } from "./reveal";
 import { SiteFoot } from "./site-foot";
@@ -34,6 +35,18 @@ const VENUES = [
     src: "/venues/pumpswap.svg",
     body: "Bonding-curve tokens are quoted beside the AMM venues.",
   },
+];
+
+const MARQUEE: [string, string, "round" | "square" | "dark"][] = [
+  ["Pump.fun", "/brands/pumpfun.png", "round"],
+  ["Raydium", "/venues/raydium.svg", "round"],
+  ["Orca", "/venues/orca.svg", "round"],
+  ["Meteora", "/venues/meteora.svg", "round"],
+  ["PumpSwap", "/venues/pumpswap.svg", "round"],
+  ["Bonk.fun", "/brands/bonkfun.png", "round"],
+  ["Solana", "/brands/solana.png", "square"],
+  ["Solscan", "/brands/solscan.png", "square"],
+  ["Reown", "/brands/reown.png", "dark"],
 ];
 
 const REASONS = [
@@ -116,7 +129,7 @@ const SEGMENTS = [
 
 const DEV_POINTS = [
   "Leave out userPublicKey for a quote. Add it for a transaction.",
-  "API swaps add no goblock fee.",
+  "Free key in one call. Monthly plans add no goblock fee.",
   "Errors come back as JSON with a msg field.",
 ];
 
@@ -484,6 +497,20 @@ export function HomePage() {
               </span>
             ))}
           </div>
+          <div className="j-marquee" aria-hidden="true">
+            <div className="j-marquee-track">
+              {[0, 1].map((copy) => (
+                <span className="j-marquee-set" key={copy}>
+                  {MARQUEE.map(([name, src, shape]) => (
+                    <span key={name} className={shape}>
+                      <img src={src} alt="" width={22} height={22} loading="lazy" decoding="async" />
+                      {name}
+                    </span>
+                  ))}
+                </span>
+              ))}
+            </div>
+          </div>
         </div>
       </Reveal>
       </div>
@@ -531,6 +558,8 @@ export function HomePage() {
           </div>
         </div>
       </Reveal>
+
+      <LaserInfo />
 
       <Reveal className="s-sec" motion="segments">
         <div className="j-wrap">

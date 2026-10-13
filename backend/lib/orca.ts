@@ -8,6 +8,7 @@ import {
   type Whirlpool,
 } from "@orca-so/whirlpools-sdk";
 import BN from "bn.js";
+import { chargeFor } from "./fees";
 import type { SwapOrderInput, SwapQuote } from "./quote";
 import { SOL_MINT } from "./tokens";
 import {
@@ -27,14 +28,14 @@ const poolCache = new Map<string, { at: number; address: string }>();
 
 export async function quoteOrca(input: SwapOrderInput): Promise<SwapQuote> {
   const amount = new BN(input.amount);
-  const linkFee = input.assemble !== false && Boolean(input.brandWallet);
-  const legs = solFees(input.inputMint, input.outputMint, amount, linkFee);
+  const charge = chargeFor(input);
+  const legs = solFees(input.inputMint, input.outputMint, amount, charge.bps);
   const address = await findPool(input.inputMint, input.outputMint);
   const user = new PublicKey(input.userPublicKey ?? "11111111111111111111111111111111");
   const opened = await openWhirlpool(address, user);
   const quoted = await swapQuote(opened.pool, opened.ctx, input.inputMint, legs.swapIn, input.slippageBps);
-  const { outAmount, outputFee } = outputAfterFee(quoted.grossOut, legs.outputIsSol, linkFee);
-  const minOutAmount = outputAfterFee(quoted.minOut, legs.outputIsSol, linkFee).outAmount;
+  const { outAmount, outputFee } = outputAfterFee(quoted.grossOut, legs.outputIsSol, charge.bps);
+  const minOutAmount = outputAfterFee(quoted.minOut, legs.outputIsSol, charge.bps).outAmount;
   const fee = legs.inputFee.add(outputFee);
   const [inputMintDecimals, outputMintDecimals, feeText] = await Promise.all([
     mintDecimals(input.inputMint),
@@ -53,7 +54,7 @@ export async function quoteOrca(input: SwapOrderInput): Promise<SwapQuote> {
     programId: ORCA_PROGRAM_ID,
     venue: "Orca",
     receipt: venueReceipt("Orca"),
-    feeBps: fee.isZero() ? 0 : 5,
+    feeBps: fee.isZero() ? 0 : charge.bps,
     feeAmount: fee.toString(),
     networkFeeLamports: feeText,
     memo: input.brand,
@@ -76,8 +77,8 @@ export async function quoteOrca(input: SwapOrderInput): Promise<SwapQuote> {
     instructions: unpacked.instructions,
     lookupTables: unpacked.lookupTables,
     brand: input.brand,
-    brandWallet: input.brandWallet,
     fee,
+    charge,
     outputMint: input.outputMint,
     minOut: minOutAmount,
   });

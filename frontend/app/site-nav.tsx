@@ -19,7 +19,9 @@ const LINKS = [
   { href: "/trade", label: "Trade" },
   { href: "/pricing", label: "Pricing" },
   { href: "/docs", label: "Docs" },
+  { href: "/dashboard", label: "API Console" },
   { href: "/mcp", label: "MCP" },
+  { href: "/litepaper", label: "Litepaper" },
 ];
 
 export function SiteNav() {

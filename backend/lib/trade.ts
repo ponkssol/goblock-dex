@@ -9,7 +9,7 @@ import {
   VersionedTransaction,
 } from "@solana/web3.js";
 import BN from "bn.js";
-import { brandFee, feeShares } from "./fees";
+import { feeOf, feeShares, type Charge } from "./fees";
 import { connection } from "./rpc";
 import { routeInstruction } from "./route";
 import { SOL_MINT } from "./tokens";
@@ -43,13 +43,13 @@ export function venueReceipt(venue: SwapVenue): SwapReceipt {
   };
 }
 
-export function solFees(inputMint: string, outputMint: string, amountIn: BN, enabled: boolean): {
+export function solFees(inputMint: string, outputMint: string, amountIn: BN, bps: number): {
   inputFee: BN;
   swapIn: BN;
   outputIsSol: boolean;
 } {
-  const inputFee = inputMint === SOL_MINT ? brandFee(amountIn, enabled) : new BN(0);
-  if (inputFee.gtn(0) && inputFee.gte(amountIn)) throw new Error("Amount is too small for the brand fee.");
+  const inputFee = inputMint === SOL_MINT ? feeOf(amountIn, bps) : new BN(0);
+  if (inputFee.gtn(0) && inputFee.gte(amountIn)) throw new Error("Amount is too small for the swap fee.");
   return {
     inputFee,
     swapIn: amountIn.sub(inputFee),
@@ -57,9 +57,9 @@ export function solFees(inputMint: string, outputMint: string, amountIn: BN, ena
   };
 }
 
-export function outputAfterFee(grossOut: BN, outputIsSol: boolean, enabled: boolean): { outAmount: BN; outputFee: BN } {
-  const outputFee = outputIsSol ? brandFee(grossOut, enabled) : new BN(0);
-  if (outputFee.gtn(0) && outputFee.gte(grossOut)) throw new Error("Amount is too small for the brand fee.");
+export function outputAfterFee(grossOut: BN, outputIsSol: boolean, bps: number): { outAmount: BN; outputFee: BN } {
+  const outputFee = outputIsSol ? feeOf(grossOut, bps) : new BN(0);
+  if (outputFee.gtn(0) && outputFee.gte(grossOut)) throw new Error("Amount is too small for the swap fee.");
   return { outAmount: grossOut.sub(outputFee), outputFee };
 }
 
@@ -164,8 +164,8 @@ export async function buildSwapTransaction(args: {
   instructions: TransactionInstruction[];
   lookupTables?: AddressLookupTableAccount[];
   brand?: string;
-  brandWallet?: string;
   fee: BN;
+  charge: Charge;
   outputMint: string;
   minOut: BN;
 }): Promise<{ transaction: string; lastValidBlockHeight: number }> {
@@ -176,9 +176,8 @@ export async function buildSwapTransaction(args: {
   );
   const output = await receivingAccount(args.user, args.outputMint);
   const mint = new PublicKey(args.outputMint === SOL_MINT ? NATIVE_MINT : args.outputMint);
-  const feeOnMinimum = args.outputMint === SOL_MINT && args.fee.gtn(0) ? brandFee(args.minOut, true) : new BN(0);
-  const brandWallet = args.brandWallet ? new PublicKey(args.brandWallet) : null;
-  const shares = brandWallet && args.fee.gtn(0) ? feeShares(brandWallet, args.fee) : null;
+  const feeOnMinimum = args.outputMint === SOL_MINT && args.fee.gtn(0) ? feeOf(args.minOut, args.charge.bps) : new BN(0);
+  const shares = args.fee.gtn(0) ? feeShares(args.fee, args.charge) : null;
   const route = routeInstruction(
     args.user,
     forwarded,
@@ -188,10 +187,10 @@ export async function buildSwapTransaction(args: {
       amount: args.minOut.add(feeOnMinimum),
       after: args.brand ? [brandMemo(args.brand, args.user)] : [],
     },
-    brandWallet && shares
+    shares
       ? {
           lamports: args.fee,
-          brand: brandWallet,
+          brand: shares.wallet,
           treasury: shares.treasury,
           treasuryLamports: shares.treasuryLamports,
         }

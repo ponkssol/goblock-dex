@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import "./flow.css";
 
 export const FLOW = [
@@ -226,10 +227,34 @@ export function FlowStage({ step, back }: { step: number; back: boolean }) {
 }
 
 export function FlowList() {
+  const list = useRef<HTMLOListElement>(null);
+  const [reached, setReached] = useState(-1);
+
+  useEffect(() => {
+    const items = Array.from(list.current?.children ?? []);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          const index = items.indexOf(entry.target);
+          setReached((current) => Math.max(current, index));
+        });
+      },
+      { rootMargin: "0px 0px -45% 0px" },
+    );
+    items.forEach((item) => observer.observe(item));
+    return () => observer.disconnect();
+  }, []);
+
   return (
-    <ol className="f-list">
+    <ol className="f-list" ref={list}>
       {FLOW.map((node, index) => (
-        <li key={node.label} data-m="rise" style={{ ["--d" as string]: `${index * 90}ms` }}>
+        <li
+          key={node.label}
+          className={index <= reached ? "on" : undefined}
+          data-m="rise"
+          style={{ ["--d" as string]: `${index * 90}ms` }}
+        >
           <span className="f-node">
             <Icon d={node.icon} />
           </span>

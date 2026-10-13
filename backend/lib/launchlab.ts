@@ -15,6 +15,7 @@ import {
   TxVersion,
 } from "@raydium-io/raydium-sdk-v2";
 import BN from "bn.js";
+import { chargeFor } from "./fees";
 import type { SwapOrderInput, SwapQuote } from "./quote";
 import { SOL_MINT } from "./tokens";
 import {
@@ -38,14 +39,14 @@ let loaded: Promise<Raydium> | null = null;
 
 export async function quoteLaunchLab(input: SwapOrderInput): Promise<SwapQuote> {
   const amount = new BN(input.amount);
-  const linkFee = input.assemble !== false && Boolean(input.brandWallet);
-  const legs = solFees(input.inputMint, input.outputMint, amount, linkFee);
+  const charge = chargeFor(input, true);
+  const legs = solFees(input.inputMint, input.outputMint, amount, charge.bps);
   const opened = await openPool(input.inputMint, input.outputMint);
   const slot = await connection.getSlot("confirmed");
   const payingSol = input.inputMint === opened.pool.mintB.toBase58();
   const quoted = curveOut(opened, payingSol, legs.swapIn, slot);
-  const { outAmount, outputFee } = outputAfterFee(quoted.gross, legs.outputIsSol, linkFee);
-  const minOutAmount = outputAfterFee(quoted.min, legs.outputIsSol, linkFee).outAmount;
+  const { outAmount, outputFee } = outputAfterFee(quoted.gross, legs.outputIsSol, charge.bps);
+  const minOutAmount = outputAfterFee(quoted.min, legs.outputIsSol, charge.bps).outAmount;
   const fee = legs.inputFee.add(outputFee);
   const [inputMintDecimals, outputMintDecimals, feeText] = await Promise.all([
     mintDecimals(input.inputMint),
@@ -64,7 +65,7 @@ export async function quoteLaunchLab(input: SwapOrderInput): Promise<SwapQuote> 
     programId: LAUNCHPAD_PROGRAM.toBase58(),
     venue: "Raydium",
     receipt: venueReceipt("Raydium"),
-    feeBps: fee.isZero() ? 0 : 5,
+    feeBps: fee.isZero() ? 0 : charge.bps,
     feeAmount: fee.toString(),
     networkFeeLamports: feeText,
     memo: input.brand,
@@ -116,8 +117,8 @@ export async function quoteLaunchLab(input: SwapOrderInput): Promise<SwapQuote> 
     instructions: unpacked.instructions,
     lookupTables: unpacked.lookupTables,
     brand: input.brand,
-    brandWallet: input.brandWallet,
     fee,
+    charge,
     outputMint: input.outputMint,
     minOut: minOutAmount,
   });

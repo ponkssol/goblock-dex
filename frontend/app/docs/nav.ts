@@ -60,7 +60,7 @@ export const DOC_GROUPS: DocGroup[] = [
       {
         href: "/docs/plans",
         title: "Plans and limits",
-        lead: "Plans differ by request cap. None of them adds a fee to the swap.",
+        lead: "The free key charges 0 to 20 bps by pair. Monthly plans add no fee to the swap.",
       },
     ],
   },

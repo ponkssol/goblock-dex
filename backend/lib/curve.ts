@@ -15,9 +15,9 @@ import {
   type BondingCurve,
 } from "@pump-fun/pump-sdk";
 import BN from "bn.js";
-import { brandFee } from "./fees";
+import { chargeFor, feeOf } from "./fees";
 import { buildSwapTransaction, priorityFeeMicroLamports } from "./trade";
-import type { SwapQuote } from "./quote";
+import type { SwapFee, SwapQuote } from "./quote";
 
 const CU_LIMIT = 300_000;
 
@@ -28,7 +28,7 @@ export async function quoteBondingCurve(
     slippageBps: number;
     userPublicKey?: string;
     brand?: string;
-    brandWallet?: string;
+    fee?: SwapFee;
     assemble?: boolean;
   },
   baseMint: PublicKey,
@@ -69,9 +69,9 @@ export async function quoteBondingCurve(
 
   const amount = new BN(input.amount);
   const slippageBps = input.slippageBps;
-  const linkFee = input.assemble !== false && Boolean(input.brandWallet);
-  const inputFee = payingSol ? brandFee(amount, linkFee) : new BN(0);
-  if (payingSol && inputFee.gte(amount)) throw new Error("Amount is too small for the brand fee.");
+  const charge = chargeFor(input, true);
+  const inputFee = payingSol ? feeOf(amount, charge.bps) : new BN(0);
+  if (payingSol && inputFee.gtn(0) && inputFee.gte(amount)) throw new Error("Amount is too small for the swap fee.");
   const swapAmount = payingSol ? amount.sub(inputFee) : amount;
   const quoteMint = curve.quoteMint.equals(PublicKey.default) ? NATIVE_MINT : curve.quoteMint;
   const decimals = mintAccount.data[44] ?? 6;
@@ -99,11 +99,11 @@ export async function quoteBondingCurve(
     throw new Error("Amount is too small for this pool.");
   }
 
-  const outputFee = payingSol ? new BN(0) : brandFee(solOut, linkFee);
+  const outputFee = payingSol ? new BN(0) : feeOf(solOut, charge.bps);
   const grossOut = payingSol ? tokens : solOut;
   const outAmount = grossOut.sub(outputFee);
   if (outAmount.lten(0) || (!payingSol && outputFee.gte(solOut))) {
-    throw new Error("Amount is too small for the brand fee.");
+    throw new Error("Amount is too small for the swap fee.");
   }
   const minOutAmount = floorBps(outAmount, 10_000 - slippageBps);
   if (minOutAmount.isZero()) throw new Error("Amount is too small for this pool.");
@@ -140,7 +140,7 @@ export async function quoteBondingCurve(
       creator: curve.creator.toBase58(),
     },
     roundTripOutAmount: payingSol ? roundTripSol(global, feeConfig, curve, swapAmount, tokens) : undefined,
-    feeBps: fee.isZero() ? 0 : 5,
+    feeBps: fee.isZero() ? 0 : charge.bps,
     feeAmount: fee.toString(),
     memo: input.brand,
     inputMintDecimals: payingSol ? 9 : decimals,
@@ -190,8 +190,8 @@ export async function quoteBondingCurve(
     user,
     instructions,
     brand: input.brand,
-    brandWallet: input.brandWallet,
     fee,
+    charge,
     outputMint: payingSol ? baseMint.toBase58() : NATIVE_MINT.toBase58(),
     minOut: minOutAmount,
   });

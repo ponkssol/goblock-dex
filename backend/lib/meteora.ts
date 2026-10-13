@@ -1,5 +1,6 @@
 import { PublicKey, Transaction } from "@solana/web3.js";
 import BN from "bn.js";
+import { chargeFor } from "./fees";
 import type { SwapOrderInput, SwapQuote } from "./quote";
 import { SOL_MINT } from "./tokens";
 import {
@@ -73,13 +74,13 @@ export async function quoteMeteora(input: SwapOrderInput): Promise<SwapQuote> {
 
 async function quoteDlmm(input: SwapOrderInput): Promise<SwapQuote> {
   const amount = new BN(input.amount);
-  const linkFee = input.assemble !== false && Boolean(input.brandWallet);
-  const legs = solFees(input.inputMint, input.outputMint, amount, linkFee);
+  const charge = chargeFor(input);
+  const legs = solFees(input.inputMint, input.outputMint, amount, charge.bps);
   const address = await findPool(input.inputMint, input.outputMint);
   const pool = await loadPool(new PublicKey(address));
   const quoted = await swapQuote(pool, input.inputMint, legs.swapIn, input.slippageBps);
-  const { outAmount, outputFee } = outputAfterFee(quoted.grossOut, legs.outputIsSol, linkFee);
-  const minOutAmount = outputAfterFee(quoted.minOut, legs.outputIsSol, linkFee).outAmount;
+  const { outAmount, outputFee } = outputAfterFee(quoted.grossOut, legs.outputIsSol, charge.bps);
+  const minOutAmount = outputAfterFee(quoted.minOut, legs.outputIsSol, charge.bps).outAmount;
   const fee = legs.inputFee.add(outputFee);
   const [inputMintDecimals, outputMintDecimals, feeText] = await Promise.all([
     mintDecimals(input.inputMint),
@@ -98,7 +99,7 @@ async function quoteDlmm(input: SwapOrderInput): Promise<SwapQuote> {
     programId: METEORA_PROGRAM_ID,
     venue: "Meteora",
     receipt: venueReceipt("Meteora"),
-    feeBps: fee.isZero() ? 0 : 5,
+    feeBps: fee.isZero() ? 0 : charge.bps,
     feeAmount: fee.toString(),
     networkFeeLamports: feeText,
     memo: input.brand,
@@ -126,8 +127,8 @@ async function quoteDlmm(input: SwapOrderInput): Promise<SwapQuote> {
     user,
     instructions: transaction.instructions,
     brand: input.brand,
-    brandWallet: input.brandWallet,
     fee,
+    charge,
     outputMint: input.outputMint,
     minOut: minOutAmount,
   });

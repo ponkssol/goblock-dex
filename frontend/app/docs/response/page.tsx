@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { CodeBlock } from "../../code-block";
 import { docMeta } from "../nav";
@@ -13,7 +14,13 @@ const FIELDS: [string, ReactNode][] = [
   ["outAmount", "What the wallet receives, in atomic units."],
   ["minOutAmount", "The floor after slippage. The transaction fails below it."],
   ["priceImpactPct", <>A fraction as a string. <code>0.01</code> means 1%.</>],
-  ["feeBps", <><code>0</code> on a normal swap. <code>5</code> when <code>brandWallet</code> is set.</>],
+  [
+    "feeBps",
+    <>
+      goblock fee on this swap, in bps of the SOL side. <code>0</code> on a monthly key. See{" "}
+      <Link href="/docs/plans#free-fees">Free key fees</Link>.
+    </>,
+  ],
   ["networkFeeLamports", "Base signature fee plus the priority fee."],
   ["roundTripOutAmount", "The SOL back if the buy is sold straight back. Single-pool buys only."],
   ["receipt", <><code>graduated</code>, <code>creatorFeeBps</code>, <code>mayhem</code>, <code>cashback</code>, and <code>creator</code> for the coin.</>],

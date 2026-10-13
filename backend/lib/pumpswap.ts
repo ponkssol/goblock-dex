@@ -12,9 +12,9 @@ import {
 } from "@pump-fun/pump-swap-sdk";
 import BN from "bn.js";
 import { quoteBondingCurve } from "./curve";
-import { brandFee } from "./fees";
+import { chargeFor, feeOf } from "./fees";
 import { buildSwapTransaction, connection, priorityFeeMicroLamports } from "./trade";
-import type { SwapQuote, SwapReceipt } from "./quote";
+import type { SwapFee, SwapQuote, SwapReceipt } from "./quote";
 
 const CU_LIMIT = 300_000;
 const SOL_MINT = NATIVE_MINT.toBase58();
@@ -30,7 +30,7 @@ export async function quotePumpSwap(input: {
   slippageBps: number;
   userPublicKey?: string;
   brand?: string;
-  brandWallet?: string;
+  fee?: SwapFee;
   assemble?: boolean;
 }): Promise<SwapQuote> {
   const networkFeePromise = priorityFeeMicroLamports();
@@ -58,16 +58,16 @@ export async function quotePumpSwap(input: {
   const amount = new BN(input.amount);
   const slippage = input.slippageBps / 100;
   const args = poolArgs(state);
-  const linkFee = input.assemble !== false && Boolean(input.brandWallet);
-  const inputFee = payingSol ? brandFee(amount, linkFee) : new BN(0);
-  if (payingSol && inputFee.gte(amount)) {
-    throw new Error("Amount is too small for the brand fee.");
+  const charge = chargeFor(input);
+  const inputFee = payingSol ? feeOf(amount, charge.bps) : new BN(0);
+  if (payingSol && inputFee.gtn(0) && inputFee.gte(amount)) {
+    throw new Error("Amount is too small for the swap fee.");
   }
   const swapAmount = payingSol ? amount.sub(inputFee) : amount;
   const buy = payingSol ? buyQuoteInput({ ...args, quote: swapAmount, slippage }) : null;
   const sell = payingSol ? null : sellBaseInput({ ...args, base: swapAmount, slippage });
   const grossOut = buy ? buy.base : sell!.uiQuote;
-  const outputFee = payingSol ? new BN(0) : brandFee(grossOut, linkFee);
+  const outputFee = payingSol ? new BN(0) : feeOf(grossOut, charge.bps);
   if (grossOut.isZero() || (!payingSol && outputFee.gte(sell!.minQuote))) {
     throw new Error("Amount is too small for this pool.");
   }
@@ -91,7 +91,7 @@ export async function quotePumpSwap(input: {
     venue: "PumpSwap",
     receipt: receipt(state),
     roundTripOutAmount: buy ? roundTripSol(args, buy.base, buy.internalQuoteWithoutFees, slippage) : undefined,
-    feeBps: fee.isZero() ? 0 : 5,
+    feeBps: fee.isZero() ? 0 : charge.bps,
     feeAmount: fee.toString(),
     memo: input.brand,
     inputMintDecimals: payingSol ? 9 : state.baseMintAccount.decimals,
@@ -115,8 +115,8 @@ export async function quotePumpSwap(input: {
     user,
     instructions,
     brand: input.brand,
-    brandWallet: input.brandWallet,
     fee,
+    charge,
     outputMint: input.outputMint,
     minOut: minOutAmount,
   });

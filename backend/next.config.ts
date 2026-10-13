@@ -14,6 +14,8 @@ const nextConfig: NextConfig = {
     "@raydium-io/raydium-sdk-v2",
     "@orca-so/whirlpools-sdk",
     "@orca-so/common-sdk",
+    "@electric-sql/pglite",
+    "pg",
   ],
   webpack: (config) => {
     config.externals.push("pino-pretty", "lokijs", "encoding");

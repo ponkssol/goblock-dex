@@ -1,5 +1,6 @@
 import { PublicKey, VersionedTransaction } from "@solana/web3.js";
 import BN from "bn.js";
+import { chargeFor } from "./fees";
 import type { SwapOrderInput, SwapQuote } from "./quote";
 import { SOL_MINT } from "./tokens";
 import {
@@ -33,13 +34,13 @@ export async function quoteRaydium(input: SwapOrderInput): Promise<SwapQuote> {
 
 async function quoteRaydiumAmm(input: SwapOrderInput): Promise<SwapQuote> {
   const amount = new BN(input.amount);
-  const linkFee = input.assemble !== false && Boolean(input.brandWallet);
-  const legs = solFees(input.inputMint, input.outputMint, amount, linkFee);
+  const charge = chargeFor(input);
+  const legs = solFees(input.inputMint, input.outputMint, amount, charge.bps);
   const computed = await compute(input.inputMint, input.outputMint, legs.swapIn, input.slippageBps);
   const grossOut = new BN(computed.data.outputAmount);
-  const { outAmount, outputFee } = outputAfterFee(grossOut, legs.outputIsSol, linkFee);
+  const { outAmount, outputFee } = outputAfterFee(grossOut, legs.outputIsSol, charge.bps);
   const threshold = new BN(computed.data.otherAmountThreshold ?? computed.data.outputAmount);
-  const minOutAmount = outputAfterFee(threshold, legs.outputIsSol, linkFee).outAmount;
+  const minOutAmount = outputAfterFee(threshold, legs.outputIsSol, charge.bps).outAmount;
   const fee = legs.inputFee.add(outputFee);
   const pool = computed.data.routePlan[0].poolId;
   if (input.roundTrip === false && !poolPrograms.has(pool)) void poolProgram(pool);
@@ -61,7 +62,7 @@ async function quoteRaydiumAmm(input: SwapOrderInput): Promise<SwapQuote> {
     programId,
     venue: "Raydium",
     receipt: venueReceipt("Raydium"),
-    feeBps: fee.isZero() ? 0 : 5,
+    feeBps: fee.isZero() ? 0 : charge.bps,
     feeAmount: fee.toString(),
     networkFeeLamports: feeText,
     memo: input.brand,
@@ -102,8 +103,8 @@ async function quoteRaydiumAmm(input: SwapOrderInput): Promise<SwapQuote> {
     instructions: unpacked.instructions,
     lookupTables: unpacked.lookupTables,
     brand: input.brand,
-    brandWallet: input.brandWallet,
     fee,
+    charge,
     outputMint: input.outputMint,
     minOut: minOutAmount,
   });

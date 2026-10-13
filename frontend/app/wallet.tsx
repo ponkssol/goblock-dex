@@ -34,5 +34,9 @@ export function useGoblockWallet() {
       if (!walletProvider) throw new Error("Connect a wallet first.");
       return walletProvider.sendTransaction(transaction, connection);
     },
+    signMessage: (message: Uint8Array) => {
+      if (!walletProvider) throw new Error("Connect a wallet first.");
+      return walletProvider.signMessage(message);
+    },
   };
 }
