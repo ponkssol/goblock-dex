@@ -100,48 +100,51 @@ export function MintForm() {
         <code>{team}</code>
       </div>
 
-      {!connected ? (
-        <button className="p-btn" type="button" onClick={openWallet} style={{ border: 0, cursor: "pointer" }}>
-          Connect Team Wallet
-        </button>
-      ) : !isTeam ? (
-        <p className="b-warn">
-          {publicKey ? shorten(publicKey.toBase58(), 4, 4) : "This wallet"} is not the team wallet. Only{" "}
-          {shorten(team, 4, 4)} can set the contract address.
-        </p>
-      ) : (
-        <form
-          className="b-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void save();
-          }}
-        >
-          <label className="m-field">
-            <small>Contract address</small>
-            <input
-              value={mint}
-              onChange={(event) => setMint(event.target.value)}
-              placeholder="Paste the $GOBLOCK mint"
-              spellCheck={false}
-              autoComplete="off"
-            />
-            {value && !valid ? <em>That is not a Solana address.</em> : null}
-          </label>
-          <label className="m-row">
-            <span>I checked this address. It cannot be changed later.</span>
-            <input type="checkbox" checked={sure} onChange={(event) => setSure(event.target.checked)} />
-          </label>
-          {balance !== null && balance < LEDGER_RENT + 10_000 ? (
-            <p className="b-warn">
-              The team wallet needs about 0.0016 SOL to open the vault ledger. Add a little SOL first.
-            </p>
-          ) : null}
-          <button className="p-btn" type="submit" disabled={!valid || !sure || busy}>
-            {busy ? "Saving…" : "Save and Lock"}
+      <form
+        className="b-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
+      >
+        <label className="m-field">
+          <small>$GOBLOCK contract address</small>
+          <input
+            value={mint}
+            onChange={(event) => setMint(event.target.value)}
+            placeholder="Paste the $GOBLOCK mint"
+            spellCheck={false}
+            autoComplete="off"
+          />
+          {value && !valid ? <em>That is not a Solana address.</em> : <em>The mint to buy and burn, once the token is live.</em>}
+        </label>
+
+        {!connected ? (
+          <button className="p-btn" type="button" onClick={openWallet} style={{ border: 0, cursor: "pointer" }}>
+            Connect Team Wallet
           </button>
-        </form>
-      )}
+        ) : !isTeam ? (
+          <p className="b-warn">
+            {publicKey ? shorten(publicKey.toBase58(), 4, 4) : "This wallet"} is not the team wallet. Only{" "}
+            {shorten(team, 4, 4)} can save this address.
+          </p>
+        ) : (
+          <>
+            <label className="m-row">
+              <span>I checked this address. It cannot be changed later.</span>
+              <input type="checkbox" checked={sure} onChange={(event) => setSure(event.target.checked)} />
+            </label>
+            {balance !== null && balance < LEDGER_RENT + 10_000 ? (
+              <p className="b-warn">
+                The team wallet needs about 0.0016 SOL to open the vault ledger. Add a little SOL first.
+              </p>
+            ) : null}
+            <button className="p-btn" type="submit" disabled={!valid || !sure || busy}>
+              {busy ? "Saving…" : "Save and Lock"}
+            </button>
+          </>
+        )}
+      </form>
 
       {message ? (
         <p className={message.ok ? "b-done" : "b-error"}>

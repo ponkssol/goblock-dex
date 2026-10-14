@@ -8,6 +8,7 @@ import {
   bondingCurvePda,
   computeFeesBps,
   getBuyTokenAmountFromSolAmount,
+  getBuyV3TokenAmountFromQuoteAmount,
   getSellSolAmountFromTokenAmount,
   OnlinePumpSdk,
   PUMP_PROGRAM_ID,
@@ -16,7 +17,7 @@ import {
 } from "@pump-fun/pump-sdk";
 import BN from "bn.js";
 import { chargeFor, feeOf } from "./fees";
-import { buildSwapTransaction, priorityFeeMicroLamports } from "./trade";
+import { buildSwapTransaction, connection, priorityFeeMicroLamports } from "./trade";
 import type { SwapFee, SwapQuote } from "./quote";
 
 const CU_LIMIT = 300_000;
@@ -34,7 +35,13 @@ export async function quoteBondingCurve(
   baseMint: PublicKey,
   payingSol: boolean,
   user: PublicKey,
+  counterMint: PublicKey = NATIVE_MINT,
 ): Promise<SwapQuote> {
+  const curveAccount = await connection.getAccountInfo(bondingCurvePda(baseMint));
+  if (!curveAccount?.owner.equals(PUMP_PROGRAM_ID) || curveAccount.data.length < 49) {
+    throw new Error("This token does not have a PumpSwap pool yet.");
+  }
+
   const mintAccount = await connection.getAccountInfo(baseMint);
   const tokenProgram = mintAccount?.owner;
   if (
@@ -45,11 +52,6 @@ export async function quoteBondingCurve(
     throw new Error("This token does not have a PumpSwap pool yet.");
   }
 
-  const curveAccount = await connection.getAccountInfo(bondingCurvePda(baseMint));
-  if (!curveAccount?.owner.equals(PUMP_PROGRAM_ID) || curveAccount.data.length < 49) {
-    throw new Error("This token does not have a PumpSwap pool yet.");
-  }
-
   const online = new OnlinePumpSdk(connection);
   const [global, feeConfig, buyState] = await Promise.all([
     online.fetchGlobal(),
@@ -57,49 +59,46 @@ export async function quoteBondingCurve(
     online.fetchBuyState(baseMint, user, tokenProgram),
   ]);
   const curve = buyState.bondingCurve;
+  const quoteMint = buyState.quoteMint;
+  const quoteIsSol = quoteMint.equals(NATIVE_MINT);
+  if (!counterMint.equals(quoteMint)) throw new Error("This token is not quoted in SOL.");
   if (curve.virtualTokenReserves.isZero() && curve.realTokenReserves.isZero()) {
     throw new Error("This token is migrating to PumpSwap. Try again in a moment.");
   }
-  if (!isSolQuote(curve.quoteMint)) {
-    throw new Error("This token is not quoted in SOL.");
-  }
-  if (payingSol && (curve.complete || curve.realTokenReserves.isZero())) {
-    throw new Error("This token has filled its bonding curve and is waiting to migrate.");
-  }
+  const openSol = quoteIsSol && !curve.complete && !curve.realTokenReserves.isZero();
 
   const amount = new BN(input.amount);
   const slippageBps = input.slippageBps;
   const charge = chargeFor(input, true);
-  const inputFee = payingSol ? feeOf(amount, charge.bps) : new BN(0);
+  const inputFee = payingSol && quoteIsSol ? feeOf(amount, charge.bps) : new BN(0);
   if (payingSol && inputFee.gtn(0) && inputFee.gte(amount)) throw new Error("Amount is too small for the swap fee.");
   const swapAmount = payingSol ? amount.sub(inputFee) : amount;
-  const quoteMint = curve.quoteMint.equals(PublicKey.default) ? NATIVE_MINT : curve.quoteMint;
   const decimals = mintAccount.data[44] ?? 6;
+  const quoteDecimals = quoteIsSol ? 9 : ((await connection.getAccountInfo(quoteMint))?.data[44] ?? 6);
 
-  const tokens = payingSol
-    ? getBuyTokenAmountFromSolAmount({
-        global,
-        feeConfig,
-        mintSupply: curve.tokenTotalSupply,
-        bondingCurve: curve,
-        amount: swapAmount,
-        quoteMint,
-      })
-    : swapAmount;
-  const solOut = payingSol
-    ? new BN(0)
-    : getSellSolAmountFromTokenAmount({
+  const tokens = payingSol ? buyTokens(openSol, global, feeConfig, curve, swapAmount, quoteMint, buyState.curveBaseTokenBalance) : swapAmount;
+  let solOut = new BN(0);
+  if (!payingSol) {
+    try {
+      solOut = getSellSolAmountFromTokenAmount({
         global,
         feeConfig,
         mintSupply: curve.tokenTotalSupply,
         bondingCurve: curve,
         amount: swapAmount,
       });
-  if ((payingSol && tokens.isZero()) || (!payingSol && solOut.isZero())) {
-    throw new Error("Amount is too small for this pool.");
+    } catch {
+      solOut = new BN(0);
+    }
+  }
+  const curveOpen = !curve.complete && !curve.virtualTokenReserves.isZero();
+  if ((payingSol && tokens.isZero()) || (!payingSol && solOut.lten(0))) {
+    throw new Error(
+      curveOpen ? "Amount is too small for this pool." : "This token has filled its bonding curve and is waiting to migrate.",
+    );
   }
 
-  const outputFee = payingSol ? new BN(0) : feeOf(solOut, charge.bps);
+  const outputFee = !payingSol && quoteIsSol ? feeOf(solOut, charge.bps) : new BN(0);
   const grossOut = payingSol ? tokens : solOut;
   const outAmount = grossOut.sub(outputFee);
   if (outAmount.lten(0) || (!payingSol && outputFee.gte(solOut))) {
@@ -139,12 +138,12 @@ export async function quoteBondingCurve(
       creatorFeeBps,
       creator: curve.creator.toBase58(),
     },
-    roundTripOutAmount: payingSol ? roundTripSol(global, feeConfig, curve, swapAmount, tokens) : undefined,
+    roundTripOutAmount: openSol && payingSol ? roundTripSol(global, feeConfig, curve, swapAmount, tokens) : undefined,
     feeBps: fee.isZero() ? 0 : charge.bps,
     feeAmount: fee.toString(),
     memo: input.brand,
-    inputMintDecimals: payingSol ? 9 : decimals,
-    outputMintDecimals: payingSol ? decimals : 9,
+    inputMintDecimals: payingSol ? quoteDecimals : decimals,
+    outputMintDecimals: payingSol ? decimals : quoteDecimals,
     networkFeeLamports: String(5_000 + Math.floor((microLamports * CU_LIMIT) / 1_000_000)),
   };
 
@@ -157,8 +156,100 @@ export async function quoteBondingCurve(
     throw new Error("This wallet does not hold that token.");
   }
 
-  const instructions = payingSol
-    ? await PUMP_SDK.buyInstructions({
+  const instructions = openSol
+    ? await legacyInstructions(payingSol, global, buyState, curve, baseMint, user, minOutAmount, swapAmount, outputFee, tokenProgram)
+    : await quotedInstructions(
+        payingSol,
+        curve.isCashbackCoin,
+        global,
+        buyState,
+        curve,
+        baseMint,
+        user,
+        minOutAmount,
+        swapAmount,
+        outputFee,
+        tokenProgram,
+      );
+
+  if (input.assemble === false) return Object.assign(quote, { instructions, lookupTables: [] });
+
+  const built = await buildSwapTransaction({
+    user,
+    instructions,
+    brand: input.brand,
+    fee,
+    charge,
+    outputMint: payingSol ? baseMint.toBase58() : quoteMint.toBase58(),
+    minOut: minOutAmount,
+  });
+
+  return {
+    ...quote,
+    ...built,
+  };
+}
+
+export async function readCurveQuote(mint: string): Promise<string | null> {
+  try {
+    const info = await connection.getAccountInfo(bondingCurvePda(new PublicKey(mint)));
+    if (!info?.owner.equals(PUMP_PROGRAM_ID) || info.data.length < 49) return null;
+    const curve = PUMP_SDK.decodeBondingCurve(info);
+    const quote = curve.quoteMint.equals(PublicKey.default) ? NATIVE_MINT : curve.quoteMint;
+    return quote.toBase58();
+  } catch {
+    return null;
+  }
+}
+
+function buyTokens(
+  openSol: boolean,
+  global: Parameters<typeof getBuyTokenAmountFromSolAmount>[0]["global"],
+  feeConfig: Parameters<typeof getBuyTokenAmountFromSolAmount>[0]["feeConfig"],
+  curve: BondingCurve,
+  swapAmount: BN,
+  quoteMint: PublicKey,
+  curveBaseTokenBalance: BN,
+): BN {
+  if (openSol || curve.isCashbackCoin || !feeConfig) {
+    return getBuyTokenAmountFromSolAmount({
+      global,
+      feeConfig,
+      mintSupply: curve.tokenTotalSupply,
+      bondingCurve: curve,
+      amount: swapAmount,
+      quoteMint,
+    });
+  }
+  try {
+    return getBuyV3TokenAmountFromQuoteAmount({
+      global,
+      feeConfig,
+      mintSupply: curve.tokenTotalSupply,
+      bondingCurve: curve,
+      amount: swapAmount,
+      curveBaseTokenBalance,
+    });
+  } catch {
+    return new BN(0);
+  }
+}
+
+async function legacyInstructions(
+  payingSol: boolean,
+  global: Parameters<typeof getBuyTokenAmountFromSolAmount>[0]["global"],
+  buyState: Awaited<ReturnType<OnlinePumpSdk["fetchBuyState"]>>,
+  curve: BondingCurve,
+  baseMint: PublicKey,
+  user: PublicKey,
+  minOutAmount: BN,
+  swapAmount: BN,
+  outputFee: BN,
+  tokenProgram: PublicKey,
+) {
+  if (!buyState.bondingCurveAccountInfo) throw new Error("This token does not have a PumpSwap pool yet.");
+  return payingSol
+    ? PUMP_SDK.buyInstructions({
         global,
         bondingCurveAccountInfo: buyState.bondingCurveAccountInfo,
         bondingCurve: curve,
@@ -170,7 +261,7 @@ export async function quoteBondingCurve(
         slippage: 0,
         tokenProgram,
       })
-    : await PUMP_SDK.sellInstructions({
+    : PUMP_SDK.sellInstructions({
         global,
         bondingCurveAccountInfo: buyState.bondingCurveAccountInfo,
         bondingCurve: curve,
@@ -183,27 +274,74 @@ export async function quoteBondingCurve(
         mayhemMode: curve.isMayhemMode,
         cashback: curve.isCashbackCoin,
       });
-
-  if (input.assemble === false) return Object.assign(quote, { instructions, lookupTables: [] });
-
-  const built = await buildSwapTransaction({
-    user,
-    instructions,
-    brand: input.brand,
-    fee,
-    charge,
-    outputMint: payingSol ? baseMint.toBase58() : NATIVE_MINT.toBase58(),
-    minOut: minOutAmount,
-  });
-
-  return {
-    ...quote,
-    ...built,
-  };
 }
 
-function isSolQuote(mint: PublicKey): boolean {
-  return mint.equals(PublicKey.default) || mint.equals(NATIVE_MINT);
+async function quotedInstructions(
+  payingSol: boolean,
+  cashback: boolean,
+  global: Parameters<typeof getBuyTokenAmountFromSolAmount>[0]["global"],
+  buyState: Awaited<ReturnType<OnlinePumpSdk["fetchBuyState"]>>,
+  curve: BondingCurve,
+  baseMint: PublicKey,
+  user: PublicKey,
+  minOutAmount: BN,
+  swapAmount: BN,
+  outputFee: BN,
+  tokenProgram: PublicKey,
+) {
+  if (!buyState.bondingCurveAccountInfo) throw new Error("This token does not have a PumpSwap pool yet.");
+  const quoteTokenProgram = buyState.quoteTokenProgram;
+  if (cashback) {
+    return payingSol
+      ? PUMP_SDK.buyV2Instructions({
+          global,
+          bondingCurveAccountInfo: buyState.bondingCurveAccountInfo,
+          bondingCurve: curve,
+          associatedUserAccountInfo: buyState.associatedUserAccountInfo,
+          mint: baseMint,
+          user,
+          amount: minOutAmount,
+          quoteAmount: swapAmount,
+          slippage: 0,
+          tokenProgram,
+          quoteTokenProgram,
+        })
+      : PUMP_SDK.sellV2Instructions({
+          global,
+          bondingCurveAccountInfo: buyState.bondingCurveAccountInfo,
+          bondingCurve: curve,
+          mint: baseMint,
+          user,
+          amount: swapAmount,
+          quoteAmount: minOutAmount.add(outputFee),
+          slippage: 0,
+          tokenProgram,
+          quoteTokenProgram,
+        });
+  }
+  return payingSol
+    ? PUMP_SDK.buyExactQuoteInV3Instructions({
+        bondingCurve: curve,
+        associatedUserAccountInfo: buyState.associatedUserAccountInfo,
+        mint: baseMint,
+        user,
+        amount: minOutAmount,
+        quoteAmount: swapAmount,
+        slippage: 0,
+        tokenProgram,
+        quoteTokenProgram,
+        partialFill: curve.isMayhemMode,
+      })
+    : PUMP_SDK.sellV3Instructions({
+        bondingCurve: curve,
+        mint: baseMint,
+        user,
+        amount: swapAmount,
+        quoteAmount: minOutAmount.add(outputFee),
+        slippage: 0,
+        tokenProgram,
+        quoteTokenProgram,
+      });
 }
 
 function floorBps(amount: BN, bps: number): BN {

@@ -9,9 +9,9 @@ export default function AdminMintPage() {
     <>
       <PageHead
         title="$GOBLOCK"
-        sub="The mint the program buys and burns. The team wallet signs the transaction, and the address locks after it lands."
+        sub="Paste the $GOBLOCK contract address when the token is live. The team wallet signs it, and the address locks after it lands."
       />
-      <Card plain title="Mint address" sub="Taken from the on-chain config. It cannot be edited once it is set.">
+      <Card plain title="Mint address" sub="The contract address for $GOBLOCK. It cannot be edited once it is set on chain.">
         <MintForm />
       </Card>
     </>

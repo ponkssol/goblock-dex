@@ -1,7 +1,9 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { AddressLookupTableAccount, PublicKey, type TransactionInstruction } from "@solana/web3.js";
 import BN from "bn.js";
 import { quoteMeteora } from "./meteora";
 import { quoteOrca } from "./orca";
+import { readCurveQuote } from "./curve";
 import { quotePumpSwap } from "./pumpswap";
 import type { SwapOrderInput, SwapQuote, SwapReceipt, SwapVenue } from "./quote";
 import { quoteRaydium } from "./raydium";
@@ -35,10 +37,10 @@ const probes: SwapVenue[] = ["PumpSwap", "Raydium", "Meteora", "Orca"];
 type CachedPrice = { at: number; quote: SwapQuote; complete: boolean };
 const priceCache = new Map<string, CachedPrice>();
 const shown = new Map<string, Promise<SwapQuote>>();
+const quoteReasons = new AsyncLocalStorage<string[]>();
 
 export async function quoteBest(input: SwapOrderInput): Promise<SwapQuote> {
-  if (input.userPublicKey) return quoteReady(input);
-  return quoteShown(input);
+  return quoteReasons.run([], () => (input.userPublicKey ? quoteReady(input) : quoteShown(input)));
 }
 
 async function quoteReady(input: SwapOrderInput): Promise<SwapQuote> {
@@ -49,17 +51,47 @@ async function quoteReady(input: SwapOrderInput): Promise<SwapQuote> {
     quoteSplit(input, direct),
   ]);
   const winner = pickWinner(direct, [...hops, split]);
-  if (!winner) throw new Error("No pool was found for this pair.");
+  if (!winner) throw quoteFailure();
   const trace = traceOf(direct);
   try {
     const quote = await materialize(input, winner);
     return { ...quote, trace };
   } catch (error) {
+    let failure = error;
+    if (winner.steps && raydiumMiss(error)) {
+      try {
+        const hopped = await hopPlans(input, new Set(["Raydium"]));
+        if (hopped.length > 0) {
+          const quote = await materialize(input, bestPlan(hopped));
+          return { ...quote, trace };
+        }
+      } catch (retryError) {
+        failure = retryError;
+      }
+    }
     const alternate = winner.steps ? direct : direct.filter((quote) => quote.venue !== winner.quote.venue);
-    if (alternate.length === 0) throw error;
-    const quote = await materialize(input, { quote: bestOf(alternate) });
-    return { ...quote, trace };
+    if (alternate.length === 0) throw softenQuote(failure);
+    try {
+      const quote = await materialize(input, { quote: bestOf(alternate) });
+      return { ...quote, trace };
+    } catch (retryError) {
+      throw softenQuote(retryError);
+    }
   }
+}
+
+function raydiumMiss(error: unknown): boolean {
+  return error instanceof Error && /cannot forward|no raydium pool/i.test(error.message);
+}
+
+function transientQuote(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : "";
+  return /timed out|could not fetch|fetch failed|econnreset|rate limit|429/i.test(message);
+}
+
+function softenQuote(error: unknown): Error {
+  if (transientQuote(error)) return new Error("The quote took too long. Try again.");
+  return error instanceof Error ? error : new Error("Could not build the swap.");
 }
 
 function quoteShown(input: SwapOrderInput): Promise<SwapQuote> {
@@ -74,7 +106,13 @@ function quoteShown(input: SwapOrderInput): Promise<SwapQuote> {
     const early = await soon;
     if (early.length === 0) {
       const finished = await rest;
-      if (finished.length === 0) throw new Error("No pool was found for this pair.");
+      if (finished.length === 0) {
+        const hopped = await hopPlans(input);
+        if (hopped.length === 0) throw quoteFailure();
+        const quote = { ...publish(bestPlan(hopped).quote), trace: traceOf(finished) };
+        remember(key, quote, true);
+        return quote;
+      }
       const quote = { ...publish(bestOf(finished)), trace: traceOf(finished) };
       remember(key, quote, true);
       return quote;
@@ -103,7 +141,7 @@ async function improve(
       return;
     }
     const [hops, split] = await Promise.all([
-      Promise.all(intermediates(input).map((mid) => quoteHop(input, mid))),
+      hopPlans(input),
       quoteSplit(input, direct),
     ]);
     const winner = pickWinner(direct, [...hops, split]);
@@ -168,23 +206,46 @@ function intermediates(input: SwapOrderInput): string[] {
   return [SOL_MINT, USDC.mint].filter((mint) => mint !== input.inputMint && mint !== input.outputMint);
 }
 
-async function quoteHop(input: SwapOrderInput, mid: string): Promise<Plan | null> {
+async function hopMids(input: SwapOrderInput): Promise<string[]> {
+  const quotes = await Promise.all([readCurveQuote(input.inputMint), readCurveQuote(input.outputMint)]);
+  return [...new Set([...intermediates(input), ...quotes.filter((mint): mint is string => Boolean(mint))])].filter(
+    (mint) => mint !== input.inputMint && mint !== input.outputMint,
+  );
+}
+
+async function hopPlans(input: SwapOrderInput, skip?: ReadonlySet<SwapVenue>): Promise<Plan[]> {
+  const mids = await hopMids(input);
+  const plans = await Promise.all(mids.map((mid) => quoteHop(input, mid, skip)));
+  return plans.filter((plan): plan is Plan => Boolean(plan));
+}
+
+function bestPlan(plans: Plan[]): Plan {
+  return plans.reduce((best, plan) => (new BN(plan.quote.outAmount).gt(new BN(best.quote.outAmount)) ? plan : best));
+}
+
+async function quoteHop(input: SwapOrderInput, mid: string, skip?: ReadonlySet<SwapVenue>): Promise<Plan | null> {
   const amount = tradable(input);
   if (amount.lten(0)) return null;
-  const opening = await probeAll({
-    inputMint: input.inputMint,
-    outputMint: mid,
-    amount: amount.toString(),
-    slippageBps: input.slippageBps,
-  });
+  const opening = await probeAll(
+    {
+      inputMint: input.inputMint,
+      outputMint: mid,
+      amount: amount.toString(),
+      slippageBps: input.slippageBps,
+    },
+    skip,
+  );
   if (opening.length === 0) return null;
   const first = bestOf(opening);
-  const closing = await probeAll({
-    inputMint: mid,
-    outputMint: input.outputMint,
-    amount: first.outAmount,
-    slippageBps: input.slippageBps,
-  });
+  const closing = await probeAll(
+    {
+      inputMint: mid,
+      outputMint: input.outputMint,
+      amount: first.outAmount,
+      slippageBps: input.slippageBps,
+    },
+    skip,
+  );
   if (closing.length === 0) return null;
   const second = bestOf(closing);
   const openingInput = {
@@ -362,13 +423,14 @@ function dedupeTables(tables: AddressLookupTableAccount[]): AddressLookupTableAc
   });
 }
 
-async function probeAll(input: SwapOrderInput): Promise<Executable[]> {
-  return (await collectProbes(input)).rest;
+async function probeAll(input: SwapOrderInput, skip?: ReadonlySet<SwapVenue>): Promise<Executable[]> {
+  return (await collectProbes(input, skip)).rest;
 }
 
-function collectProbes(input: SwapOrderInput): { soon: Promise<Executable[]>; rest: Promise<Executable[]> } {
+function collectProbes(input: SwapOrderInput, skip?: ReadonlySet<SwapVenue>): { soon: Promise<Executable[]>; rest: Promise<Executable[]> } {
+  const venues = skip ? probes.filter((venue) => !skip.has(venue)) : probes;
   const found: Executable[] = [];
-  let remaining = probes.length;
+  let remaining = venues.length;
   let soonSettled = false;
   let armed = false;
   let resolveSoon: (quotes: Executable[]) => void = () => {};
@@ -386,7 +448,7 @@ function collectProbes(input: SwapOrderInput): { soon: Promise<Executable[]>; re
     resolveSoon([...found]);
   };
 
-  for (const venue of probes) {
+  for (const venue of venues) {
     void probeVenue(venue, input).then((quote) => {
       if (quote) {
         found.push(quote);
@@ -409,9 +471,35 @@ function collectProbes(input: SwapOrderInput): { soon: Promise<Executable[]>; re
 async function probeVenue(venue: SwapVenue, input: SwapOrderInput): Promise<Executable | null> {
   try {
     return (await within(builders[venue](input))) as Executable;
-  } catch {
+  } catch (error) {
+    noteQuoteError(error);
     return null;
   }
+}
+
+function noteQuoteError(error: unknown) {
+  const message = error instanceof Error ? error.message.trim() : "";
+  const bucket = quoteReasons.getStore();
+  if (!bucket || !message || bucket.includes(message)) return;
+  bucket.push(message);
+}
+
+function quoteFailure(): Error {
+  const reasons = quoteReasons.getStore() ?? [];
+  const found = (hint: string) => reasons.find((reason) => reason.toLowerCase().includes(hint));
+  const specific =
+    found("does not hold") ??
+    found("too small") ??
+    found("migrating") ??
+    found("waiting to migrate") ??
+    found("not quoted") ??
+    found("does not fit");
+  if (specific) return new Error(specific);
+  const transient = (reason: string) => /timed out|could not fetch|fetch failed|econnreset|rate limit|429/i.test(reason);
+  if (reasons.length > 0 && reasons.some(transient)) {
+    return new Error("The quote took too long. Try again.");
+  }
+  return new Error("No pool was found for this pair.");
 }
 
 function within(promise: Promise<SwapQuote>): Promise<SwapQuote> {

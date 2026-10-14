@@ -5,6 +5,7 @@
   "exports": {
     "./quote": "./quote.ts",
     "./tokens": "./tokens.ts",
-    "./units": "./units.ts"
+    "./units": "./units.ts",
+    "./skill": "./skill.ts"
   }
 }

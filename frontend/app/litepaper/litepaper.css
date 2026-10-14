@@ -202,8 +202,7 @@
     padding: 8px;
     overflow-y: auto;
     overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+    scrollbar-width: none;
   }
 
   .l-jump nav a {

@@ -1,9 +1,16 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import {
+  createAssociatedTokenAccountIdempotentInstruction,
+  getAssociatedTokenAddressSync,
+  NATIVE_MINT,
+  TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+} from "@solana/spl-token";
 import {
   AddressLookupTableAccount,
   ComputeBudgetProgram,
   PublicKey,
+  SystemProgram,
   TransactionInstruction,
   TransactionMessage,
   VersionedTransaction,
@@ -20,6 +27,10 @@ export { connection };
 export const CU_LIMIT = 600_000;
 const PRIORITY_FEE_CAP_LAMPORTS = 100_000;
 const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+// Active mainnet table of shared program accounts. Two-leg routes exceed 1232 bytes without it.
+const COMMON_LOOKUP_TABLE = new PublicKey("9rVP9Ly5RC1nix3WDm5QgkoWJbxV7Kteth1KHtYk5hT9");
+const ACTIVE_LOOKUP = BigInt("0xffffffffffffffff");
+let commonLookup: { at: number; table: AddressLookupTableAccount | null } | null = null;
 
 const decimalsCache = new Map<string, number>();
 let priorityCache: { at: number; microLamports: number } | null = null;
@@ -130,10 +141,16 @@ export async function bestQuote(miss: string, attempts: Promise<SwapQuote>[]): P
   if (quotes.length > 0) {
     return quotes.reduce((best, quote) => (new BN(quote.outAmount).gt(new BN(best.outAmount)) ? quote : best));
   }
-  const migrating = settled.some(
-    (item) => item.status === "rejected" && item.reason instanceof Error && item.reason.message.includes("migrating"),
+  const reasons = settled.flatMap((item) =>
+    item.status === "rejected" && item.reason instanceof Error ? [item.reason.message] : [],
   );
-  throw new Error(migrating ? "This token is migrating. Try again in a moment." : miss);
+  if (reasons.some((reason) => reason.includes("migrating"))) {
+    throw new Error("This token is migrating. Try again in a moment.");
+  }
+  if (reasons.some((reason) => /timed out|could not fetch|fetch failed|econnreset|rate limit|429/i.test(reason))) {
+    throw new Error("The venue quote timed out.");
+  }
+  throw new Error(miss);
 }
 
 function limitQuote<T>(promise: Promise<T>): Promise<T> {
@@ -171,12 +188,17 @@ export async function buildSwapTransaction(args: {
 }): Promise<{ transaction: string; lastValidBlockHeight: number }> {
   const microLamports = await priorityFeeMicroLamports();
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
-  const forwarded = args.instructions.filter(
+  let forwarded = args.instructions.filter(
     (instruction) => !instruction.programId.equals(ComputeBudgetProgram.programId),
   );
   const output = await receivingAccount(args.user, args.outputMint);
+  const floor = args.minOut.add(
+    args.outputMint === SOL_MINT && args.fee.gtn(0) ? feeOf(args.minOut, args.charge.bps) : new BN(0),
+  );
+  if (args.outputMint === SOL_MINT && !forwarded.some((instruction) => closesOutput(instruction, output))) {
+    forwarded = [...forwarded, ...(await wrapProceeds(args.user, output, floor))];
+  }
   const mint = new PublicKey(args.outputMint === SOL_MINT ? NATIVE_MINT : args.outputMint);
-  const feeOnMinimum = args.outputMint === SOL_MINT && args.fee.gtn(0) ? feeOf(args.minOut, args.charge.bps) : new BN(0);
   const shares = args.fee.gtn(0) ? feeShares(args.fee, args.charge) : null;
   const route = routeInstruction(
     args.user,
@@ -184,7 +206,7 @@ export async function buildSwapTransaction(args: {
     {
       account: output,
       mint,
-      amount: args.minOut.add(feeOnMinimum),
+      amount: floor,
       after: args.brand ? [brandMemo(args.brand, args.user)] : [],
     },
     shares
@@ -198,14 +220,25 @@ export async function buildSwapTransaction(args: {
   );
   const limit = ComputeBudgetProgram.setComputeUnitLimit({ units: CU_LIMIT });
   const price = ComputeBudgetProgram.setComputeUnitPrice({ microLamports });
+  const lookupTables = await withCommonLookup(args.lookupTables);
   const compile = (includePrice: boolean) =>
     new TransactionMessage({
       payerKey: args.user,
       recentBlockhash: blockhash,
       instructions: includePrice ? [limit, price, route] : [limit, route],
-    }).compileToV0Message(args.lookupTables ?? []);
+    }).compileToV0Message(lookupTables);
+  const measure = (message: ReturnType<typeof compile>) => {
+    try {
+      return new VersionedTransaction(message).serialize().length;
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "";
+      if (!text.includes("encoding overruns")) throw error;
+      return 1233;
+    }
+  };
   let message = compile(true);
-  if (new VersionedTransaction(message).serialize().length > 1232) message = compile(false);
+  if (measure(message) > 1232) message = compile(false);
+  if (measure(message) > 1232) throw new Error("This pair does not fit in one transaction.");
   if (message.header.numRequiredSignatures !== 1) {
     throw new Error("This route needs another signature.");
   }
@@ -229,6 +262,68 @@ export async function instructionsFromVersioned(
   }
   const message = TransactionMessage.decompile(transaction.message, { addressLookupTableAccounts: lookupTables });
   return { instructions: message.instructions, lookupTables };
+}
+
+async function withCommonLookup(tables: AddressLookupTableAccount[] | undefined): Promise<AddressLookupTableAccount[]> {
+  const common = await commonLookupTable();
+  const lookupTables = [...(tables ?? [])];
+  if (common && !lookupTables.some((table) => table.key.equals(common.key))) lookupTables.push(common);
+  return lookupTables;
+}
+
+async function commonLookupTable(): Promise<AddressLookupTableAccount | null> {
+  if (commonLookup && Date.now() - commonLookup.at < 10 * 60_000) return commonLookup.table;
+  try {
+    const loaded = await connection.getAddressLookupTable(COMMON_LOOKUP_TABLE);
+    const table = loaded.value?.state.deactivationSlot === ACTIVE_LOOKUP ? loaded.value : null;
+    commonLookup = { at: Date.now(), table };
+    return table;
+  } catch {
+    return commonLookup?.table ?? null;
+  }
+}
+
+const TOKEN_PROGRAMS = new Set([TOKEN_PROGRAM_ID.toBase58(), TOKEN_2022_PROGRAM_ID.toBase58()]);
+
+function closesOutput(instruction: TransactionInstruction, output: PublicKey): boolean {
+  return (
+    TOKEN_PROGRAMS.has(instruction.programId.toBase58()) &&
+    instruction.data[0] === 9 &&
+    instruction.keys[0]?.pubkey.equals(output) === true
+  );
+}
+
+// A SOL sell pays the wallet in lamports. The route can only see a token balance, so the
+// proceeds are wrapped into the WSOL account before that check and unwrapped again after it.
+async function wrapProceeds(user: PublicKey, output: PublicKey, floor: BN): Promise<TransactionInstruction[]> {
+  const existing = await connection.getAccountInfo(output);
+  const held = existing && existing.data.length >= 72 ? existing.data.readBigUInt64LE(64) : 0n;
+  const lamports = BigInt(floor.toString());
+  const instructions = [
+    createAssociatedTokenAccountIdempotentInstruction(user, output, user, NATIVE_MINT),
+    ...(lamports > 0n
+      ? [SystemProgram.transfer({ fromPubkey: user, toPubkey: output, lamports })]
+      : []),
+    new TransactionInstruction({
+      programId: TOKEN_PROGRAM_ID,
+      keys: [{ pubkey: output, isSigner: false, isWritable: true }],
+      data: Buffer.from([17]),
+    }),
+  ];
+  if (held === 0n) {
+    instructions.push(
+      new TransactionInstruction({
+        programId: TOKEN_PROGRAM_ID,
+        keys: [
+          { pubkey: output, isSigner: false, isWritable: true },
+          { pubkey: user, isSigner: false, isWritable: true },
+          { pubkey: user, isSigner: true, isWritable: false },
+        ],
+        data: Buffer.from([9]),
+      }),
+    );
+  }
+  return instructions;
 }
 
 function brandMemo(brand: string, signer: PublicKey): TransactionInstruction {

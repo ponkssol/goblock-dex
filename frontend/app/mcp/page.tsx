@@ -5,7 +5,9 @@ import { Reveal } from "../reveal";
 import { SiteFoot } from "../site-foot";
 import { SiteNav } from "../site-nav";
 import { pageMeta } from "../site";
+import { PUBLIC_SKILL } from "@goblock/shared/skill";
 import { McpConsole } from "./mcp-console";
+import { SkillFile } from "./skill-file";
 import "../home.css";
 import "../sections.css";
 import "../pages.css";
@@ -18,8 +20,6 @@ export const metadata = pageMeta({
   keywords: ["Solana MCP server", "MCP swap", "Claude MCP", "Cursor MCP", "AI agent Solana"],
 });
 
-const AGENTS = ["Claude", "Cursor", "Windsurf", "VS Code", "Codex"];
-
 const TOOL_CARDS = [
   {
     id: "search_tokens",
@@ -29,7 +29,7 @@ const TOOL_CARDS = [
   {
     id: "get_price",
     body: "Price of a token in SOL and USD.",
-    input: `{ "mint": "DezX…B263" }`,
+    input: `{ "token": "SOL" }`,
   },
   {
     id: "get_quote",
@@ -38,13 +38,13 @@ const TOOL_CARDS = [
   },
   {
     id: "build_swap",
-    body: "A transaction for the wallet to sign. goblock never signs for you.",
-    input: `{ "quoteId": "q_01…", "wallet": "7xKX…9fQa" }`,
+    body: "An unsigned transaction for the wallet to approve. goblock never signs for you.",
+    input: `{ "from": "SOL", "to": "USDC", "amount": "0.1", "wallet": "7xKX…" }`,
   },
   {
     id: "get_receipt",
     body: "Graduated or on the curve, creator fee, mayhem, and cashback for a coin.",
-    input: `{ "mint": "9BB6…pump" }`,
+    input: `{ "token": "9BB6…pump" }`,
   },
   {
     id: "get_balance",
@@ -54,15 +54,15 @@ const TOOL_CARDS = [
 ];
 
 const PROMPTS = [
-  "Swap 0.1 SOL to USDC with 1% slippage.",
-  "What does 1 SOL buy of BONK right now, and which venue wins?",
-  "Is this coin still on the bonding curve? 9BB6…pump",
-  "Build a sell of half my USDC to SOL for wallet 7xKX…9fQa.",
+  ["swap", "Swap 0.1 SOL to USDC with 1% slippage."],
+  ["price", "What does 1 SOL buy of BONK right now, and which venue wins?"],
+  ["receipt", "Is this coin still on the bonding curve? 9BB6…pump"],
+  ["sell", "Build a sell of half my USDC to SOL for wallet 7xKX…9fQa."],
 ];
 
 const STEPS = [
-  ["Pick your settings", "Network, slippage, and which tools the agent may call."],
-  ["Copy the config", "One block for Cursor, Claude, Windsurf, VS Code, or Codex."],
+  ["Copy the block", "One short config for the agent you use."],
+  ["Paste it in", "Drop it in that agent's MCP file, then restart the agent."],
   ["Ask in plain words", "The agent quotes, then hands your wallet a transaction to approve."],
 ];
 
@@ -79,7 +79,7 @@ export default function McpPage() {
             <div className="j-copy">
               <span className="m-chip" {...m("rise", 80)}>
                 <i />
-                MCP · Preview
+                MCP · Live
               </span>
               <h1 {...m("rise", 140)}>
                 Swap from your
@@ -89,6 +89,10 @@ export default function McpPage() {
               <p {...m("rise", 220)}>
                 Connect Claude, Cursor, and other agents to goblock over MCP. Quote, route, and build a swap without
                 leaving the chat.
+              </p>
+              <p className="m-endpoint" {...m("rise", 260)}>
+                <code>POST /api/mcp</code>
+                Mainnet. The agent quotes. Your wallet signs.
               </p>
               <div className="j-actions" {...m("rise", 300)}>
                 <a className="j-go" href="#setup">
@@ -102,12 +106,6 @@ export default function McpPage() {
                     </svg>
                   </span>
                 </Link>
-              </div>
-              <div className="m-works" {...m("rise", 380)}>
-                <small>Works with</small>
-                {AGENTS.map((agent) => (
-                  <span key={agent}>{agent}</span>
-                ))}
               </div>
             </div>
 
@@ -167,18 +165,32 @@ export default function McpPage() {
 
       <Reveal className="s-sec" motion="setup" id="setup">
         <div className="j-wrap">
-          <div className="s-head split">
-            <div>
-              <span className="s-kick" {...m("rise")}>Setup</span>
-              <h2 {...m("rise", 80)}>Settings in, config out.</h2>
-            </div>
-            <p className="s-sub" {...m("rise", 160)}>
-              Every change on the left rewrites the config on the right. The MCP server is in preview, so these values
-              are examples for now.
+          <div className="s-head m-install-head">
+            <span className="s-kick" {...m("rise")}>Install</span>
+            <h2 {...m("rise", 80)}>Add the server.</h2>
+            <p className="s-sub" {...m("rise", 140)}>
+              Pick the agent. Copy the block into its MCP config. Replace the key with one from the dashboard.
             </p>
           </div>
           <div {...m("rise", 200)}>
             <McpConsole />
+          </div>
+        </div>
+      </Reveal>
+
+      <Reveal className="s-sec" motion="skill" id="skill">
+        <div className="j-wrap">
+          <div className="s-head split">
+            <div>
+              <span className="s-kick" {...m("rise")}>Skill</span>
+              <h2 {...m("rise", 80)}>What the agent is told.</h2>
+            </div>
+            <p className="s-sub" {...m("rise", 160)}>
+              This is the file the agent reads at <code>goblock://skill</code> on a default connection. Copy it, or download <code>goblock-skill.md</code>.
+            </p>
+          </div>
+          <div {...m("rise", 200)}>
+            <SkillFile text={PUBLIC_SKILL} />
           </div>
         </div>
       </Reveal>
@@ -209,16 +221,15 @@ export default function McpPage() {
               <h2 {...m("rise", 80)}>Ask like you would ask a trader.</h2>
             </div>
             <p className="s-sub" {...m("rise", 160)}>
-              Once goblock is in the agent&apos;s MCP list, these work as written.
+              Once goblock is in the agent&apos;s MCP list, ask in plain words. The same ideas are available as MCP
+              prompts named swap, price, receipt, and sell.
             </p>
           </div>
           <ul className="m-prompts">
-            {PROMPTS.map((prompt, index) => (
-              <li key={prompt} data-m="lift" style={{ ["--i" as string]: index % 2 }}>
-                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-                {prompt}
+            {PROMPTS.map(([name, prompt], index) => (
+              <li key={name} data-m="lift" style={{ ["--i" as string]: index % 2 }}>
+                <code>{name}</code>
+                <span>{prompt}</span>
               </li>
             ))}
           </ul>

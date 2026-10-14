@@ -49,6 +49,27 @@ export function useEarnings() {
   return dashboard;
 }
 
+const ADMIN_NAV: { group: string; items: { href: string; label: string; icon: IconName }[] }[] = [
+  {
+    group: "Admin",
+    items: [
+      { href: "/admin", label: "Overview", icon: "overview" },
+      { href: "/admin/keys", label: "All keys", icon: "keys" },
+      { href: "/admin/payments", label: "Payments", icon: "earnings" },
+      { href: "/admin/vouchers", label: "Discount codes", icon: "plan" },
+    ],
+  },
+  {
+    group: "Operator",
+    items: [
+      { href: "/admin/settings", label: "Pricing", icon: "earnings" },
+      { href: "/admin/limits", label: "Rate limits", icon: "usage" },
+      { href: "/admin/fees", label: "Fees", icon: "plan" },
+      { href: "/admin/mint", label: "$GOBLOCK", icon: "shield" },
+    ],
+  },
+];
+
 const NAV: { group: string; items: { href: string; label: string; icon: IconName }[] }[] = [
   {
     group: "Workspace",
@@ -84,6 +105,14 @@ const TITLES: Record<string, string> = {
   "/dashboard/quickstart": "Quickstart",
   "/dashboard/playground": "Playground",
   "/dashboard/settings": "Settings",
+  "/admin": "Admin",
+  "/admin/keys": "All keys",
+  "/admin/payments": "Payments",
+  "/admin/vouchers": "Discount codes",
+  "/admin/settings": "Pricing",
+  "/admin/limits": "Rate limits",
+  "/admin/fees": "Fees",
+  "/admin/mint": "$GOBLOCK",
 };
 
 function Provider({ session, children }: { session: Session; children: ReactNode }) {
@@ -150,6 +179,8 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const path = usePathname();
   const { overview, session } = useDashboard();
   const paid = overview?.plan === "paid";
+  const deployer = session.wallet === DEPLOYER_WALLET;
+  const groups = deployer ? [...NAV, ...ADMIN_NAV] : NAV;
 
   return (
     <aside className={open ? "ds-side open" : "ds-side"} aria-label="Dashboard">
@@ -161,10 +192,9 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
           <Icon name="close" />
         </button>
       </div>
-      <span className="ds-side-tag">API Console</span>
 
       <nav className="ds-nav">
-        {NAV.map((group) => (
+        {groups.map((group) => (
           <div key={group.group} className="ds-nav-group">
             <small>{group.group}</small>
             {group.items.map((item) => {
@@ -200,12 +230,6 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
             </Link>
           )}
         </div>
-        {session.wallet === DEPLOYER_WALLET ? (
-          <Link href="/admin" className="ds-side-link" onClick={onClose}>
-            <Icon name="shield" />
-            Admin
-          </Link>
-        ) : null}
         <Link
           href="/dashboard/settings"
           className={path === "/dashboard/settings" ? "ds-side-link on" : "ds-side-link"}

@@ -138,15 +138,13 @@
   }
 }
 
-@container (max-width: 1360px) {
-  .j-sheet .claude span {
+@container (max-width: 1100px) {
+  .j-sheet .claude-label {
     display: none;
   }
 
   .j-sheet .claude {
-    justify-content: center;
-    width: 38px;
-    padding: 0;
+    padding-inline: 8px;
   }
 }
 

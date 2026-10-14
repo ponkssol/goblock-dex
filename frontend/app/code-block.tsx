@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 
-export type Snippet = { label: string; code: string; file?: string };
+export type Snippet = { label: string; code: string; file?: string; icon?: string };
 
 const TOKEN = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/.*$|#.*$|\b\d+\b|\$\{?[A-Z_]+\}?)/gm;
 
@@ -55,6 +55,7 @@ export function CodeBlock({ snippets, className = "" }: { snippets: Snippet[]; c
               className={index === active ? "on" : undefined}
               onClick={() => setActive(index)}
             >
+              {snippet.icon ? <img src={snippet.icon} alt="" width={16} height={16} /> : null}
               {snippet.label}
             </button>
           ))}

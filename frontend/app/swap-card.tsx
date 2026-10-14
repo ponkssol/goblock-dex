@@ -85,7 +85,7 @@ type ListedToken = TokenInfo & {
   marketCap?: number;
   createdAt?: number;
 };
-type Holding = ListedToken & { amount: string };
+type Holding = ListedToken & { amount: string; naming?: boolean };
 type PickerSide = "pay" | "receive";
 
 const TOKEN_PROGRAM = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -113,6 +113,7 @@ const PAIRS: ListedToken[] = [
   },
 ];
 const tokenLists = new Map<string, ListedToken[]>();
+const holdingNames = new Map<string, ListedToken>();
 
 function listKey(scope: "pump" | "equities", query: string) {
   return `${scope}:${query.trim().toLowerCase()}`;
@@ -128,12 +129,13 @@ async function loadTokenList(scope: "pump" | "equities", query: string, signal?:
 
 function withPastedMint(scope: "pump" | "equities", query: string, tokens: ListedToken[]) {
   const mint = query.trim();
-  if (scope !== "pump" || !isMint(mint)) return tokens;
-  const spot = tokenLists.get(listKey("pump", "")) ?? [];
+  if (!isMint(mint)) return tokens;
   const match = tokens.find((token) => token.mint === mint);
-  if (!spot.length) return tokens;
-  const rest = spot.filter((token) => token.mint !== mint);
-  return match ? [match, ...rest].slice(0, 40) : rest;
+  if (match) return [match];
+  if (scope !== "pump") return [];
+  const spot = tokenLists.get(listKey("pump", "")) ?? [];
+  const known = spot.find((token) => token.mint === mint);
+  return known ? [known] : [];
 }
 
 export function SwapCard() {
@@ -146,6 +148,12 @@ export function SwapCard() {
   const [customSlippage, setCustomSlippage] = useState("");
   const [feeMode, setFeeMode] = useState<"max" | "exact">("max");
   const [feeText, setFeeText] = useState("0.0001");
+  const [tradeMode, setTradeMode] = useState<"swap" | "limit">("swap");
+  const [modeOpen, setModeOpen] = useState(false);
+  const [limitText, setLimitText] = useState("");
+  const [watching, setWatching] = useState(false);
+  const modeSlot = useRef<HTMLDivElement>(null);
+  const watchLock = useRef(false);
   const [panel, setPanel] = useState<"chart" | "memo" | "book" | "settings" | null>(null);
   const [shown, setShown] = useState<"chart" | "memo" | "book" | "settings" | null>(null);
 
@@ -157,6 +165,22 @@ export function SwapCard() {
     const timer = window.setTimeout(() => setShown(null), 700);
     return () => window.clearTimeout(timer);
   }, [panel]);
+
+  useEffect(() => {
+    if (!modeOpen) return;
+    const close = (event: PointerEvent) => {
+      if (!modeSlot.current?.contains(event.target as Node)) setModeOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setModeOpen(false);
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [modeOpen]);
   const [explorer, setExplorer] = useState<"solscan" | "explorer">("solscan");
   const [brand, setBrand] = useState("");
   const [brandWallet, setBrandWallet] = useState("");
@@ -203,15 +227,27 @@ export function SwapCard() {
     const id = ++requestId.current;
     if (!atomicAmount || !isMint(pay.mint) || !isMint(receive.mint)) {
       setOrder(null);
+      setShownOut("0");
       setQuoting(false);
+      setError("");
+      return;
+    }
+    if (pay.mint === receive.mint) {
+      setOrder(null);
+      setShownOut("0");
+      setQuoting(false);
+      setError("Choose two different tokens.");
       return;
     }
 
     let alive = true;
-    let seq = 0;
+    let timer = 0;
+    const pause = (ms: number) =>
+      new Promise<void>((resolve) => {
+        timer = window.setTimeout(resolve, ms);
+      });
     const load = async (quiet: boolean) => {
-      if (quiet && swappingRef.current) return;
-      const ticket = ++seq;
+      if (quiet && swappingRef.current) return "";
       if (!quiet) {
         setQuoting(true);
         setError("");
@@ -227,32 +263,62 @@ export function SwapCard() {
       try {
         const response = await fetch(`/api/swap?${params}`);
         const body = (await response.json()) as SwapQuote;
-        if (!alive || id !== requestId.current || ticket !== seq) return;
+        if (!alive || id !== requestId.current) return null;
         if (!response.ok || !body.outAmount) {
+          const message = body.msg ?? "No pool was found for this pair.";
           if (!quiet) {
             setOrder(null);
-            setError(body.msg ?? "No pool was found for this pair.");
+            setShownOut("0");
+            setError(message);
           }
-          return;
+          return message;
         }
         setOrder(body);
+        setError("");
+        return "";
       } catch {
-        if (!alive || id !== requestId.current || ticket !== seq) return;
+        if (!alive || id !== requestId.current) return null;
         if (!quiet) {
           setOrder(null);
+          setShownOut("0");
           setError("Could not fetch a quote.");
         }
+        return "Could not fetch a quote.";
       } finally {
-        if (alive && id === requestId.current && ticket === seq && !quiet) setQuoting(false);
+        if (alive && id === requestId.current && !quiet) setQuoting(false);
       }
     };
 
-    const timer = setTimeout(() => load(false), 400);
-    const poll = setInterval(() => load(true), 8_000);
+    const run = async () => {
+      await pause(400);
+      if (!alive || id !== requestId.current) return;
+      let problem = await load(false);
+      if (problem && /took too long|could not fetch/i.test(problem)) {
+        await pause(1_500);
+        if (!alive || id !== requestId.current) return;
+        problem = await load(false);
+      }
+      if (!alive || id !== requestId.current || problem === null || problem) return;
+      let misses = 0;
+      while (alive && id === requestId.current) {
+        await pause(8_000);
+        if (!alive || id !== requestId.current) return;
+        if (swappingRef.current) continue;
+        const again = await load(true);
+        if (again === null) return;
+        if (!again) {
+          misses = 0;
+          continue;
+        }
+        misses += 1;
+        if (misses >= 3) return;
+      }
+    };
+
+    void run();
     return () => {
       alive = false;
-      clearTimeout(timer);
-      clearInterval(poll);
+      window.clearTimeout(timer);
     };
   }, [atomicAmount, pay.mint, receive.mint, slippageBps, brandWallet, feeMode, feeText]);
 
@@ -342,24 +408,25 @@ export function SwapCard() {
       setResults((current) => {
         const mint = queryRef.current.trim();
         if (!isMint(mint)) return mint ? current : tokens;
-        const match = current.find((token) => token.mint === mint);
-        const rest = tokens.filter((token) => token.mint !== mint);
-        return match ? [match, ...rest].slice(0, 40) : current.length ? current : tokens;
+        const match = [...current, ...tokens].find((token) => token.mint === mint);
+        return match ? [match] : [];
       });
     });
     void loadTokenList("equities", "");
   }, []);
 
+  const walletList = pickerSide === "pay" && market === "spot" && connected;
+
   useEffect(() => {
-    if (!pickerOpen) return;
+    if (!pickerOpen || walletList) return;
     const cached = tokenLists.get(listKey(listScope, query));
     if (cached?.length) setResults(withPastedMint(listScope, query, cached));
+    else setListing(true);
     const controller = new AbortController();
     const timer = setTimeout(async () => {
-      if (!cached?.length) setListing(true);
       try {
         const tokens = await loadTokenList(listScope, query, controller.signal);
-        setResults(withPastedMint(listScope, query, tokens));
+        if (!controller.signal.aborted) setResults(withPastedMint(listScope, query, tokens));
       } catch {
         // Keep the last list if the request is cancelled or the directory is down.
       } finally {
@@ -370,7 +437,7 @@ export function SwapCard() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [pickerOpen, query, listScope]);
+  }, [pickerOpen, query, listScope, walletList]);
 
   useEffect(() => {
     if (!pickerOpen || pickerSide !== "pay" || !publicKey) {
@@ -381,8 +448,23 @@ export function SwapCard() {
     let alive = true;
     setListing(true);
     void loadHoldings(connection, owner)
-      .then((rows) => {
-        if (alive) setHoldings(rows);
+      .then(async (rows) => {
+        if (!alive) return;
+        const pending = rows.map((row) => (unnamed(row) ? { ...row, naming: true } : row));
+        setHoldings(pending);
+        if (!pending.some((row) => row.naming)) return;
+        try {
+          const named = await labelHoldings(pending);
+          if (!alive) return;
+          setHoldings(named);
+          setPay((current) => {
+            const match = named.find((row) => row.mint === current.mint);
+            if (!match || unnamed(match) || current.symbol === match.symbol) return current;
+            return { ...current, symbol: match.symbol, name: match.name, image: match.image ?? current.image };
+          });
+        } catch {
+          if (alive) setHoldings(pending.map((row) => ({ ...row, naming: false })));
+        }
       })
       .catch(() => {
         if (alive) setHoldings([]);
@@ -416,8 +498,9 @@ export function SwapCard() {
     setQuery("");
   }
 
-  function plainSwapError(caught: unknown) {
-    const raw = caught instanceof Error ? caught.message : "The swap could not be sent.";
+  async function plainSwapError(caught: unknown) {
+    const logs = await readSwapLogs(caught);
+    const raw = [caught instanceof Error ? caught.message : "The swap could not be sent.", ...logs].join("\n");
     const lower = raw.toLowerCase();
     if (lower.includes("user rejected") || lower.includes("rejected the request") || lower.includes("user denied")) {
       return "The wallet rejected the swap.";
@@ -432,16 +515,25 @@ export function SwapCard() {
       .filter(Boolean);
     const reason = [...lines].reverse().find(
       (line) =>
-        /error|failed|insufficient|slippage|exceeded|custom program/i.test(line) &&
+        /error|failed|insufficient|slippage|exceeded|custom program|invalid account/i.test(line) &&
+        !/getLogs\(\)/i.test(line) &&
         !/consumed \d+ of \d+ compute units/i.test(line) &&
         !/invoke \[/i.test(line) &&
         !/^program data:/i.test(line),
     );
     if (reason && reason.length < 160 && !/^program [1-9A-HJ-NP-Za-km-z]{20,}/i.test(reason)) return reason;
-    if (raw.length > 160 || /consumed \d+ of \d+ compute units/i.test(raw)) {
+    if (raw.length > 160 || /consumed \d+ of \d+ compute units/i.test(raw) || /getLogs\(\)/.test(raw)) {
       return "The swap could not be simulated. Try again.";
     }
     return raw;
+  }
+
+  function chooseMode(next: "swap" | "limit") {
+    setTradeMode(next);
+    setModeOpen(false);
+    setWatching(false);
+    setMessage("");
+    setError("");
   }
 
   function flip() {
@@ -450,6 +542,8 @@ export function SwapCard() {
     setReceive(pay);
     setPayAmount("");
     setUsdText("");
+    setLimitText("");
+    setWatching(false);
     setOrder(null);
     setMessage("");
     setError("");
@@ -498,7 +592,7 @@ export function SwapCard() {
       }
       setResult({ ok: true, signature: sent, detail: "" });
     } catch (caught) {
-      setResult({ ok: false, signature, detail: plainSwapError(caught) });
+      setResult({ ok: false, signature, detail: await plainSwapError(caught) });
     } finally {
       setSwapping(false);
       setAwaiting(false);
@@ -507,9 +601,16 @@ export function SwapCard() {
 
   const payValue = Number(payAmount);
   const resultHref = result?.signature ? `https://solscan.io/tx/${result.signature}` : "";
-  const rate =
+  const marketRate =
     order?.outAmount && payValue > 0
-      ? `1 ${pay.symbol} ≈ ${(Number(formatAtomic(order.outAmount, order.outputMintDecimals, 8)) / payValue).toLocaleString("en-US", { maximumFractionDigits: 6 })} ${receive.symbol}`
+      ? Number(formatAtomic(order.outAmount, order.outputMintDecimals, 12)) / payValue
+      : null;
+  const limitPrice = Number(limitText);
+  const limitReceive =
+    payValue > 0 && Number.isFinite(limitPrice) && limitPrice > 0 ? payValue * limitPrice : 0;
+  const rate =
+    marketRate && Number.isFinite(marketRate) && marketRate > 0
+      ? `1 ${pay.symbol} ≈ ${formatRate(marketRate)} ${receive.symbol}`
       : "";
   const sellCaption = usdOn
     ? payAmount && Number(payAmount) > 0
@@ -534,7 +635,37 @@ export function SwapCard() {
     if (order?.outAmount) setShownOut(formatAtomic(order.outAmount, order.outputMintDecimals));
   }, [order]);
 
+  useEffect(() => {
+    if (tradeMode !== "limit" || limitText) return;
+    if (!order?.outAmount || !(payValue > 0)) return;
+    const live = Number(formatAtomic(order.outAmount, order.outputMintDecimals, 12)) / payValue;
+    if (Number.isFinite(live) && live > 0) setLimitText(formatRate(live));
+  }, [tradeMode, limitText, order, payValue]);
+
+  useEffect(() => {
+    setWatching((active) => {
+      if (active) setMessage("");
+      return false;
+    });
+  }, [pay.mint, receive.mint, atomicAmount]);
+
+  useEffect(() => {
+    if (!watching || watchLock.current) return;
+    const target = Number(limitText);
+    if (!order?.outAmount || !(payValue > 0) || !Number.isFinite(target) || target <= 0) return;
+    const live = Number(formatAtomic(order.outAmount, order.outputMintDecimals, 12)) / payValue;
+    if (!Number.isFinite(live) || live < target) return;
+    watchLock.current = true;
+    setWatching(false);
+    setMessage("");
+    void swap().finally(() => {
+      watchLock.current = false;
+    });
+  }, [watching, order, limitText, payValue]);
+
   const needle = query.trim().toLowerCase();
+  const address = query.trim();
+  const exactAddress = isMint(address);
   const walletRows = holdings.filter((token) => {
     if (!needle) return true;
     return (
@@ -543,11 +674,13 @@ export function SwapCard() {
       token.mint.toLowerCase().startsWith(needle)
     );
   });
-  const known = pickerSide === "pay" && market === "spot" ? walletRows : results;
+  const known = walletList ? walletRows : results;
+  const visible = exactAddress ? known.filter((token) => token.mint === address) : known;
   const pasted =
-    pickerSide === "receive" && isMint(query.trim()) && !known.some((token) => token.mint === query.trim())
-      ? { symbol: "TOKEN", name: "Custom token", mint: query.trim(), decimals: 6 }
+    !walletList && exactAddress && !listing && !visible.some((token) => token.mint === address)
+      ? { symbol: "TOKEN", name: "Custom token", mint: address, decimals: 6 }
       : null;
+  const searching = listing && visible.length === 0 && !pasted;
 
   function toggleUsd() {
     if (!usdOn) {
@@ -582,6 +715,12 @@ export function SwapCard() {
   function openPicker(side: PickerSide) {
     setPickerSide(side);
     setQuery("");
+    const useWallet = side === "pay" && market === "spot" && connected;
+    if (!useWallet) {
+      const cached = tokenLists.get(listKey(listScope, ""));
+      if (cached?.length) setResults(cached);
+      else setListing(true);
+    }
     setPickerOpen(true);
   }
 
@@ -598,11 +737,35 @@ export function SwapCard() {
         <div className="trade-spin">
         <div className="tools" inert={result ? true : undefined}>
           <div className="trade-tab">
-          <strong>Swap</strong>
+          <div className="mode" ref={modeSlot}>
+            <button
+              type="button"
+              className={modeOpen ? "tune on" : "tune"}
+              aria-haspopup="menu"
+              aria-expanded={modeOpen}
+              aria-label="Order type"
+              onClick={() => setModeOpen((open) => !open)}
+            >
+              <span className="tune-pct mode-word" key={tradeMode}>{tradeMode === "limit" ? "Limit" : "Swap"}</span>
+              <svg className={modeOpen ? "mode-chev open" : "mode-chev"} viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+            {modeOpen ? (
+              <div className="mode-menu" role="menu">
+                <button type="button" role="menuitem" className={tradeMode === "swap" ? "on" : undefined} onClick={() => chooseMode("swap")}>
+                  Swap
+                </button>
+                <button type="button" role="menuitem" className={tradeMode === "limit" ? "on" : undefined} onClick={() => chooseMode("limit")}>
+                  Limit
+                </button>
+              </div>
+            ) : null}
+          </div>
           <button
             type="button"
             className={panel === "settings" ? "tune on" : "tune"}
-            aria-label={`Swap settings, slippage ${formatPct(slippageBps)} percent`}
+            aria-label={slippageMode === "auto" ? "Swap settings, slippage auto" : `Swap settings, slippage ${formatPct(slippageBps)} percent`}
             aria-expanded={panel === "settings"}
             onClick={() => setPanel((current) => (current === "settings" ? null : "settings"))}
           >
@@ -610,7 +773,7 @@ export function SwapCard() {
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.7 15a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 8.9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
             </svg>
-            <span className="tune-pct">{formatPct(slippageBps)}%</span>
+            <span className="tune-pct">{slippageMode === "auto" ? "Auto" : `${formatPct(slippageBps)}%`}</span>
           </button>
           </div>
           <div className="tool-side">
@@ -621,7 +784,7 @@ export function SwapCard() {
               aria-expanded={panel === "memo"}
               onClick={() => setPanel((current) => (current === "memo" ? null : "memo"))}
             >
-              <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
                 <path d="M7 4h7l4 4v12H7z" />
                 <path d="M14 4v4h4M9 13h6M9 17h4" />
               </svg>
@@ -633,7 +796,7 @@ export function SwapCard() {
               aria-expanded={panel === "book"}
               onClick={() => setPanel((current) => (current === "book" ? null : "book"))}
             >
-              <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
                 <path d="M5 7h6M5 12h4M5 17h5M19 7h-6M19 12h-4M19 17h-5" />
               </svg>
             </button>
@@ -644,7 +807,7 @@ export function SwapCard() {
               aria-expanded={panel === "chart"}
               onClick={() => setPanel((current) => (current === "chart" ? null : "chart"))}
             >
-              <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
                 <path d="M4 19V5M4 19h16" />
                 <path d="M7 14l4-5 3 3 5-6" />
               </svg>
@@ -721,26 +884,113 @@ export function SwapCard() {
               <span>Buy</span>
               <TokenChip key={receive.mint} token={receive} onOpen={() => openPicker("receive")} />
             </div>
-            <div className={quoting ? "quote busy" : "quote"} aria-busy={quoting}>
-              {shownOut}
+            <div className="quote-cross">
+              <div className={tradeMode === "swap" ? "quote-layer on" : "quote-layer"} aria-hidden={tradeMode !== "swap"}>
+                <div className={quoting ? "quote busy" : "quote"} aria-busy={quoting}>
+                  {shownOut}
+                </div>
+                <span className="sub">{buyNote || "$—"}</span>
+              </div>
+              <div className={tradeMode === "limit" ? "quote-layer on" : "quote-layer"} aria-hidden={tradeMode !== "limit"}>
+                <div className="quote">{limitReceive > 0 ? formatRate(limitReceive) : "0"}</div>
+                <span className="sub">If this limit price is reached</span>
+              </div>
             </div>
-            <span className="sub">{buyNote || "$—"}</span>
+          </div>
+        </div>
+
+        <div className={tradeMode === "limit" ? "limit-slot open" : "limit-slot"}>
+          <div className="limit-slot-clip">
+          <div className="panel limit" inert={tradeMode === "limit" ? undefined : true}>
+            <div className="row">
+              <span>Limit price</span>
+              <button
+                type="button"
+                className="market-fill"
+                onClick={() => {
+                  if (!marketRate || !(marketRate > 0)) return;
+                  setLimitText(formatRate(marketRate));
+                  setWatching(false);
+                  setMessage("");
+                }}
+              >
+                Market
+              </button>
+            </div>
+            <div className="limit-price">
+              <span className="limit-base">1 {pay.symbol}</span>
+              <input
+                inputMode="decimal"
+                aria-label={`Limit price in ${receive.symbol} per ${pay.symbol}`}
+                placeholder="0"
+                value={limitText}
+                onChange={(event) => {
+                  const raw = event.target.value;
+                  if (raw && !/^\d*\.?\d*$/.test(raw)) return;
+                  setLimitText(raw);
+                  setWatching(false);
+                  setMessage("");
+                }}
+              />
+              <em className="limit-unit">{receive.symbol}</em>
+            </div>
+            <span className="sub">{marketRate && marketRate > 0 ? `Market ${formatRate(marketRate)}` : "Market —"}</span>
+          </div>
           </div>
         </div>
 
         <button
           className={swapping ? "swap busy" : "swap"}
           type="button"
-          disabled={connected && (!order || swapping || quoting)}
+          aria-busy={swapping}
+          disabled={
+            connected &&
+            (swapping ||
+              (tradeMode === "limit" ? !atomicAmount || (!watching && !(Number(limitText) > 0)) : !order || quoting))
+          }
           onClick={() => {
             if (!connected) {
               openWallet();
               return;
             }
-            void swap();
+            if (tradeMode === "swap") {
+              void swap();
+              return;
+            }
+            if (watching) {
+              setWatching(false);
+              setMessage("");
+              return;
+            }
+            const target = Number(limitText);
+            if (!Number.isFinite(target) || target <= 0) return;
+            const live =
+              order?.outAmount && payValue > 0
+                ? Number(formatAtomic(order.outAmount, order.outputMintDecimals, 12)) / payValue
+                : null;
+            if (live !== null && Number.isFinite(live) && live >= target) {
+              void swap();
+              return;
+            }
+            setError("");
+            setWatching(true);
+            setMessage("Watching this price while the page stays open.");
           }}
         >
-          <span className="swap-label">{!connected ? "Connect Wallet" : awaiting ? "Confirming…" : swapping ? "Signing…" : "Swap"}</span>
+          {swapping ? <span className="swap-spin" aria-hidden="true" /> : null}
+          <span className="swap-label mode-word" key={tradeMode}>
+            {!connected
+              ? "Connect Wallet"
+              : awaiting
+                ? "Confirming…"
+                : swapping
+                  ? "Signing…"
+                  : watching
+                    ? "Watching"
+                    : tradeMode === "limit"
+                      ? "Limit"
+                      : "Swap"}
+          </span>
         </button>
 
         {error || message ? <p className={error ? "status error" : "status"}>{error || message}</p> : null}
@@ -974,7 +1224,7 @@ export function SwapCard() {
             onClick={(event) => event.stopPropagation()}
           >
             <div className="picker-head">
-              <h2>{pickerSide === "pay" ? "Your tokens" : "Select a token"}</h2>
+              <h2>{walletList ? "Your tokens" : "Select a token"}</h2>
               <button type="button" className="close" onClick={() => setPickerOpen(false)} aria-label="Close">
                 <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
                   <path d="M6 6l12 12M18 6 6 18" />
@@ -1004,29 +1254,40 @@ export function SwapCard() {
                 spellCheck={false}
                 autoFocus
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setQuery(next);
+                  if (!walletList && !tokenLists.get(listKey(listScope, next))?.length) setListing(true);
+                }}
               />
             </label>
-            <div className="pairs" aria-label="Pairs">
-              {PAIRS.map((token) => (
-                <button key={token.mint} type="button" onClick={() => chooseToken(token)}>
-                  <TokenMark token={token} />
-                  {token.symbol}
-                </button>
-              ))}
-            </div>
+            {exactAddress ? null : (
+              <div className="pairs" aria-label="Pairs">
+                {PAIRS.map((token) => (
+                  <button key={token.mint} type="button" onClick={() => chooseToken(token)}>
+                    <TokenMark token={token} />
+                    {token.symbol}
+                  </button>
+                ))}
+              </div>
+            )}
             <ul className="token-list">
-              {known.map((token) => (
+              {visible.map((token) => (
                 <li key={token.mint}>
                   <button type="button" onClick={() => chooseToken(token)}>
                     <TokenMark token={token} />
                     <span className="token-copy">
                       <strong>
-                        {token.symbol}
+                        {"naming" in token && token.naming ? (
+                          <span className="name-wait" aria-label="Loading name" />
+                        ) : (
+                          token.symbol
+                        )}
                         {token.verified ? <Verified /> : null}
                       </strong>
                       <small>
-                        {token.name} <em>{shorten(token.mint, 4, 4)}</em>
+                        {"naming" in token && token.naming ? null : <>{token.name} </>}
+                        <em>{shorten(token.mint, 4, 4)}</em>
                       </small>
                     </span>
                     {holdingAmount(token) ? (
@@ -1053,19 +1314,19 @@ export function SwapCard() {
                   </button>
                 </li>
               ) : null}
-              {pickerSide === "pay" && market === "spot" && !connected ? (
-                <li className="empty wallet-empty">
-                  <p>Connect a wallet to see the tokens it holds.</p>
-                  <button type="button" className="swap" onClick={() => { setPickerOpen(false); openWallet(); }}>
-                    Connect wallet
-                  </button>
+              {searching ? (
+                <li className="token-loading">
+                  <span className="token-spin-wrap" role="status" aria-label="Searching">
+                    <span className="token-spin" />
+                  </span>
                 </li>
               ) : null}
-              {listing && !known.length && !(pickerSide === "pay" && market === "spot" && !connected) ? <li className="empty">Loading tokens…</li> : null}
-              {!listing && !known.length && !pasted && !(pickerSide === "pay" && market === "spot" && !connected) ? (
+              {!listing && !visible.length && !pasted ? (
                 <li className="empty">
-                  {pickerSide === "pay" && market === "spot"
-                    ? "This wallet has no tokens yet."
+                  {walletList
+                    ? needle
+                      ? "No token matches that search."
+                      : "This wallet has no tokens yet."
                     : market === "equities"
                       ? "No stock matches that search."
                       : "No token matches that search."}
@@ -1132,12 +1393,58 @@ function holdingAmount(token: ListedToken | Holding): string | null {
   return "amount" in token && typeof token.amount === "string" ? token.amount : null;
 }
 
+function formatRate(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0";
+  if (value >= 0.000001) return value.toLocaleString("en-US", { maximumFractionDigits: 6 });
+  return value.toLocaleString("en-US", { maximumSignificantDigits: 4 });
+}
+
+async function readSwapLogs(caught: unknown): Promise<string[]> {
+  if (!caught || typeof caught !== "object") return [];
+  const error = caught as { logs?: string[]; getLogs?: () => Promise<string[] | undefined> };
+  if (Array.isArray(error.logs) && error.logs.length) return error.logs;
+  if (typeof error.getLogs !== "function") return [];
+  try {
+    return (await error.getLogs()) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function unnamed(token: { symbol: string; name: string }) {
+  return token.symbol === "TOKEN" && token.name === "Token";
+}
+
+async function labelHoldings(rows: Holding[]): Promise<Holding[]> {
+  const missing = rows.filter((row) => row.naming).map((row) => row.mint);
+  if (!missing.length) return rows.map((row) => ({ ...row, naming: false }));
+  const response = await fetch(`/api/tokens?mints=${encodeURIComponent(missing.join(","))}`);
+  const body = (await response.json()) as { tokens?: ListedToken[] };
+  for (const token of body.tokens ?? []) {
+    if (!unnamed(token)) holdingNames.set(token.mint, token);
+  }
+  return rows.map((row) => {
+    const known = holdingNames.get(row.mint);
+    if (!known) return { ...row, naming: false };
+    return {
+      ...row,
+      symbol: known.symbol,
+      name: known.name,
+      image: known.image ?? row.image,
+      verified: known.verified ?? row.verified,
+      naming: false,
+    };
+  });
+}
+
 function directoryToken(mint: string): ListedToken | undefined {
   if (mint === USDC.mint) return { ...USDC, name: "USD Coin", verified: true };
   if (mint === FARTCOIN.mint) return { ...FARTCOIN, name: "Fartcoin", verified: true };
+  const named = holdingNames.get(mint);
+  if (named) return named;
   for (const list of tokenLists.values()) {
     const found = list.find((token) => token.mint === mint);
-    if (found) return found;
+    if (found && !unnamed(found)) return found;
   }
   return undefined;
 }

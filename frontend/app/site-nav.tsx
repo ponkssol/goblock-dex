@@ -4,24 +4,21 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { shorten } from "@/lib/units";
-import { CLAUDE_RAYS } from "./claude";
 import { useWalletLite } from "./wallet-lite";
 
-const CLAUDE_HOME = "https://claude.ai/new";
-
-function claudeLink(origin: string) {
-  const prompt = `I want to add Solana swaps to my app with the goblock API. Read the docs at ${origin}/docs and help me quote a swap and sign the transaction.`;
-  return `${CLAUDE_HOME}?q=${encodeURIComponent(prompt)}`;
-}
+const AGENTS = [
+  { src: "/agents/claude.svg", name: "Claude" },
+  { src: "/agents/cursor.svg", name: "Cursor" },
+  { src: "/agents/codex.svg", name: "Codex" },
+  { src: "/agents/windsurf.svg", name: "Windsurf" },
+  { src: "/agents/vscode.svg", name: "VS Code" },
+];
 
 const LINKS = [
   { href: "/", label: "Home" },
   { href: "/trade", label: "Trade" },
   { href: "/pricing", label: "Pricing" },
-  { href: "/docs", label: "Docs" },
   { href: "/dashboard", label: "API Console" },
-  { href: "/mcp", label: "MCP" },
-  { href: "/litepaper", label: "Litepaper" },
 ];
 
 export function SiteNav() {
@@ -30,12 +27,7 @@ export function SiteNav() {
   const [menu, setMenu] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
-  const [claude, setClaude] = useState(CLAUDE_HOME);
   const slot = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setClaude(claudeLink(window.location.origin));
-  }, []);
 
   useEffect(() => {
     setNavOpen(false);
@@ -86,12 +78,14 @@ export function SiteNav() {
         })}
       </nav>
       <div className="wallet-slot" ref={slot}>
-        <a className="claude" href={claude} target="_blank" rel="noopener noreferrer" aria-label="Connect with Claude" title="Connect with Claude">
-          <svg viewBox="-12 -12 24 24" width="18" height="18" aria-hidden="true">
-            <path d={CLAUDE_RAYS} />
-          </svg>
-          <span>Connect with Claude</span>
-        </a>
+        <Link className="claude" href="/mcp" aria-label="Connect" title="Connect">
+          <span className="claude-logos" aria-hidden="true">
+            {AGENTS.map((agent) => (
+              <img key={agent.name} src={agent.src} alt="" width={18} height={18} />
+            ))}
+          </span>
+          <span className="claude-label">Connect</span>
+        </Link>
         <button
           className="wallet"
           type="button"

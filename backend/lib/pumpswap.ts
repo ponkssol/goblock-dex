@@ -1,5 +1,6 @@
 import { NATIVE_MINT } from "@solana/spl-token";
 import { PublicKey } from "@solana/web3.js";
+import { canonicalPumpPoolPdaWithQuote } from "@pump-fun/pump-sdk";
 import {
   buyQuoteInput,
   canonicalPumpPoolPda,
@@ -11,9 +12,9 @@ import {
   type SwapSolanaState,
 } from "@pump-fun/pump-swap-sdk";
 import BN from "bn.js";
-import { quoteBondingCurve } from "./curve";
+import { quoteBondingCurve, readCurveQuote } from "./curve";
 import { chargeFor, feeOf } from "./fees";
-import { buildSwapTransaction, connection, priorityFeeMicroLamports } from "./trade";
+import { buildSwapTransaction, connection, mintDecimals, priorityFeeMicroLamports } from "./trade";
 import type { SwapFee, SwapQuote, SwapReceipt } from "./quote";
 
 const CU_LIMIT = 300_000;
@@ -39,27 +40,94 @@ export async function quotePumpSwap(input: {
   const payingSol = inputMint.equals(NATIVE_MINT);
   const receivingSol = outputMint.equals(NATIVE_MINT);
   if (payingSol === receivingSol) {
-    throw new Error("This version only swaps SOL with a PumpSwap token.");
+    if (payingSol) throw new Error("This version only swaps SOL with a PumpSwap token.");
+    const user = input.userPublicKey ? new PublicKey(input.userPublicKey) : READ_ONLY_USER;
+    return quoteTokenPair(input, inputMint, outputMint, user, networkFeePromise);
   }
 
   const baseMint = payingSol ? outputMint : inputMint;
-  const pool = await findPool(baseMint);
   const user = input.userPublicKey ? new PublicKey(input.userPublicKey) : READ_ONLY_USER;
-  if (!pool) {
-    if (!baseMint.toBase58().endsWith("pump")) throw new Error("This token does not have a PumpSwap pool yet.");
-    return quoteBondingCurve(connection, input, baseMint, payingSol, user);
+  const pool = await canonicalPool(baseMint);
+  if (!pool) return quoteCurveOrIndexed(input, baseMint, payingSol, user, networkFeePromise);
+  try {
+    return await quoteAmm(input, pool, user, payingSol, networkFeePromise);
+  } catch (error) {
+    try {
+      return await quoteBondingCurve(connection, input, baseMint, payingSol, user);
+    } catch {
+      throw error;
+    }
   }
-  const state = await online.swapSolanaState(pool, user);
+}
 
-  if (!state.pool.quoteMint.equals(NATIVE_MINT)) {
+async function quoteCurveOrIndexed(
+  input: Parameters<typeof quotePumpSwap>[0],
+  baseMint: PublicKey,
+  payingSol: boolean,
+  user: PublicKey,
+  networkFeePromise: Promise<number>,
+): Promise<SwapQuote> {
+  try {
+    return await quoteBondingCurve(connection, input, baseMint, payingSol, user);
+  } catch (error) {
+    if (!worthIndex(error, baseMint)) throw error;
+    const indexed = await indexedPool(baseMint);
+    if (!indexed) throw error;
+    return quoteAmm(input, indexed, user, payingSol, networkFeePromise);
+  }
+}
+
+async function quoteTokenPair(
+  input: Parameters<typeof quotePumpSwap>[0],
+  inputMint: PublicKey,
+  outputMint: PublicKey,
+  user: PublicKey,
+  networkFeePromise: Promise<number>,
+): Promise<SwapQuote> {
+  const candidates = [
+    { base: outputMint, counter: inputMint, buying: true },
+    { base: inputMint, counter: outputMint, buying: false },
+  ];
+  let last: unknown = new Error("This version only swaps SOL with a PumpSwap token.");
+  for (const candidate of candidates) {
+    const quote = await readCurveQuote(candidate.base.toBase58());
+    if (quote !== candidate.counter.toBase58()) continue;
+    try {
+      return await quoteBondingCurve(connection, input, candidate.base, candidate.buying, user, candidate.counter);
+    } catch (error) {
+      last = error;
+      const message = error instanceof Error ? error.message : "";
+      if (!message.includes("filled its bonding curve") && !message.includes("migrating")) continue;
+      const pool = canonicalPumpPoolPdaWithQuote(candidate.base, candidate.counter);
+      const info = await connection.getAccountInfo(pool);
+      if (!info?.owner.equals(PUMP_AMM_PROGRAM_ID)) continue;
+      return quoteAmm(input, pool, user, candidate.buying, networkFeePromise, candidate.counter);
+    }
+  }
+  throw last;
+}
+
+async function quoteAmm(
+  input: Parameters<typeof quotePumpSwap>[0],
+  pool: PublicKey,
+  user: PublicKey,
+  payingSol: boolean,
+  networkFeePromise: Promise<number>,
+  expectedQuote?: PublicKey,
+): Promise<SwapQuote> {
+  const state = await online.swapSolanaState(pool, user);
+  const quoteMint = state.pool.quoteMint;
+  const quoteIsSol = quoteMint.equals(NATIVE_MINT);
+  if (expectedQuote ? !quoteMint.equals(expectedQuote) : !quoteIsSol) {
     throw new Error("This pool is not paired with SOL.");
   }
+  const quoteDecimals = quoteIsSol ? 9 : await mintDecimals(quoteMint.toBase58());
 
   const amount = new BN(input.amount);
   const slippage = input.slippageBps / 100;
   const args = poolArgs(state);
   const charge = chargeFor(input);
-  const inputFee = payingSol ? feeOf(amount, charge.bps) : new BN(0);
+  const inputFee = quoteIsSol && payingSol ? feeOf(amount, charge.bps) : new BN(0);
   if (payingSol && inputFee.gtn(0) && inputFee.gte(amount)) {
     throw new Error("Amount is too small for the swap fee.");
   }
@@ -67,7 +135,7 @@ export async function quotePumpSwap(input: {
   const buy = payingSol ? buyQuoteInput({ ...args, quote: swapAmount, slippage }) : null;
   const sell = payingSol ? null : sellBaseInput({ ...args, base: swapAmount, slippage });
   const grossOut = buy ? buy.base : sell!.uiQuote;
-  const outputFee = payingSol ? new BN(0) : feeOf(grossOut, charge.bps);
+  const outputFee = quoteIsSol && !payingSol ? feeOf(grossOut, charge.bps) : new BN(0);
   if (grossOut.isZero() || (!payingSol && outputFee.gte(sell!.minQuote))) {
     throw new Error("Amount is too small for this pool.");
   }
@@ -94,8 +162,8 @@ export async function quotePumpSwap(input: {
     feeBps: fee.isZero() ? 0 : charge.bps,
     feeAmount: fee.toString(),
     memo: input.brand,
-    inputMintDecimals: payingSol ? 9 : state.baseMintAccount.decimals,
-    outputMintDecimals: payingSol ? state.baseMintAccount.decimals : 9,
+    inputMintDecimals: payingSol ? quoteDecimals : state.baseMintAccount.decimals,
+    outputMintDecimals: payingSol ? state.baseMintAccount.decimals : quoteDecimals,
     networkFeeLamports: String(5_000 + Math.floor(((await networkFeePromise) * CU_LIMIT) / 1_000_000)),
   };
 
@@ -173,38 +241,46 @@ function roundTripSol(
   }
 }
 
-async function findPool(baseMint: PublicKey): Promise<PublicKey | null> {
+async function canonicalPool(baseMint: PublicKey): Promise<PublicKey | null> {
   const cached = poolCache.get(baseMint.toBase58());
   if (cached) return cached;
-  if (!baseMint.toBase58().endsWith("pump")) return null;
-
   const canonical = canonicalPumpPoolPda(baseMint);
-  const canonicalInfo = await connection.getAccountInfo(canonical);
-  if (canonicalInfo?.owner.equals(PUMP_AMM_PROGRAM_ID)) {
-    poolCache.set(baseMint.toBase58(), canonical);
-    return canonical;
+  const info = await connection.getAccountInfo(canonical);
+  if (!info?.owner.equals(PUMP_AMM_PROGRAM_ID)) return null;
+  poolCache.set(baseMint.toBase58(), canonical);
+  return canonical;
+}
+
+function worthIndex(error: unknown, mint: PublicKey): boolean {
+  const message = error instanceof Error ? error.message : "";
+  if (message.includes("migrating") || message.includes("filled its bonding curve")) return true;
+  return message.includes("does not have a PumpSwap pool yet") && mint.toBase58().endsWith("pump");
+}
+
+async function indexedPool(baseMint: PublicKey): Promise<PublicKey | null> {
+  try {
+    const response = await fetch(`https://api.dexscreener.com/token-pairs/v1/solana/${baseMint.toBase58()}`, {
+      signal: AbortSignal.timeout(1_500),
+    });
+    if (!response.ok) return null;
+    const pairs = (await response.json()) as Array<{
+      dexId?: string;
+      pairAddress?: string;
+      quoteToken?: { address?: string };
+      liquidity?: { usd?: number };
+    }>;
+    const match = pairs
+      .filter((pair) => pair.dexId === "pumpswap" && pair.quoteToken?.address === SOL_MINT && pair.pairAddress)
+      .sort((left, right) => (right.liquidity?.usd ?? 0) - (left.liquidity?.usd ?? 0))[0];
+    if (!match?.pairAddress) return null;
+    const pool = new PublicKey(match.pairAddress);
+    const info = await connection.getAccountInfo(pool);
+    if (!info?.owner.equals(PUMP_AMM_PROGRAM_ID)) return null;
+    poolCache.set(baseMint.toBase58(), pool);
+    return pool;
+  } catch {
+    return null;
   }
-
-  const response = await fetch(`https://api.dexscreener.com/token-pairs/v1/solana/${baseMint.toBase58()}`, {
-    signal: AbortSignal.timeout(1_500),
-  });
-  if (!response.ok) return null;
-  const pairs = (await response.json()) as Array<{
-    dexId?: string;
-    pairAddress?: string;
-    quoteToken?: { address?: string };
-    liquidity?: { usd?: number };
-  }>;
-  const match = pairs
-    .filter((pair) => pair.dexId === "pumpswap" && pair.quoteToken?.address === SOL_MINT && pair.pairAddress)
-    .sort((left, right) => (right.liquidity?.usd ?? 0) - (left.liquidity?.usd ?? 0))[0];
-  if (!match?.pairAddress) return null;
-
-  const pool = new PublicKey(match.pairAddress);
-  const info = await connection.getAccountInfo(pool);
-  if (!info?.owner.equals(PUMP_AMM_PROGRAM_ID)) throw new Error("PumpSwap pool was not found.");
-  poolCache.set(baseMint.toBase58(), pool);
-  return pool;
 }
 
 function poolArgs(state: SwapSolanaState) {

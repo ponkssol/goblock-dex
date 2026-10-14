@@ -12,14 +12,13 @@ export function AdminOverview() {
 
   return (
     <>
-      <PageHead title="Overview" sub="Keys, checkout payments, discount codes, and the public waitlist." />
-      <ul className="ds-kpis">
+      <PageHead title="Overview" sub="Keys, checkout payments, and discount codes." />
+      <ul className="ds-kpis three">
         <Kpi label="Active keys" value={count(data.activeKeys)} foot={`${count(data.keys)} issued`} icon="keys" />
         <Kpi label="Payments" value={count(data.payments)} foot="Checkout settlements" icon="earnings" />
-        <Kpi label="Waitlist" value={count(data.waiting)} foot="People on the list" icon="users" />
         <Kpi label="Requests today" value={count(data.requestsToday)} foot={`${count(data.codes)} live codes`} icon="usage" lime />
       </ul>
-      <div className="ds-grid c-1-1">
+      <div className="ds-grid">
         <Card plain title="Latest payments" sub="Newest checkout first" action={<Link href="/admin/payments">All payments</Link>}>
           {data.recentPayments.length ? (
             <ul className="ds-vouchers">
@@ -34,21 +33,6 @@ export function AdminOverview() {
             </ul>
           ) : (
             <p className="ds-fine">No payments yet.</p>
-          )}
-        </Card>
-        <Card plain title="Latest signups" sub="Public waitlist" action={<Link href="/admin/waitlist">Open waitlist</Link>}>
-          {data.recentWaitlist.length ? (
-            <ul className="ds-vouchers">
-              {data.recentWaitlist.map((row) => (
-                <li key={row.id}>
-                  <b>{row.email}</b>
-                  <span>{row.wallet ? shorten(row.wallet, 4, 4) : "No wallet"}</span>
-                  <em>{ago(row.createdAt)}</em>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="ds-fine">No one has joined yet.</p>
           )}
         </Card>
       </div>

@@ -72,6 +72,9 @@ export async function respondSwap(request: NextRequest, plan: KeyPlan | null = n
   if (!isMint(inputMint) || !isMint(outputMint)) {
     return NextResponse.json({ msg: "Invalid mint." }, { status: 400 });
   }
+  if (inputMint === outputMint) {
+    return NextResponse.json({ msg: "Choose two different tokens." }, { status: 400 });
+  }
   if (!/^[1-9]\d*$/.test(amount)) {
     return NextResponse.json({ msg: "Invalid amount." }, { status: 400 });
   }

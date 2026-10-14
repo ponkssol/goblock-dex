@@ -29,12 +29,15 @@ const METADATA_PROGRAM = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518
 const LIST_URL = "https://lite-api.jup.ag/tokens/v2/tag?query=verified";
 const STOCK_URL = "https://lite-api.jup.ag/tokens/v2/search?query=xStock";
 const JUP_SEARCH = "https://api.jup.ag/tokens/v2/search?query=";
+const LITE_SEARCH = "https://lite-api.jup.ag/tokens/v2/search?query=";
 const PUMP_URL = "https://frontend-api-v3.pump.fun/coins";
+const PUMP_COIN_URL = "https://frontend-api-v3.pump.fun/coins-v2";
 const PUMP_HEADERS = { Accept: "application/json", "User-Agent": "Mozilla/5.0" };
 
 let cache: { at: number; tokens: JupiterToken[] } | null = null;
 let stockCache: { at: number; tokens: JupiterToken[] } | null = null;
 const pumpCache = new Map<string, { at: number; tokens: ListedToken[] }>();
+const searchCache = new Map<string, { at: number; tokens: JupiterToken[] }>();
 
 type PumpCoin = {
   mint?: string;
@@ -42,6 +45,7 @@ type PumpCoin = {
   symbol?: string;
   image_uri?: string;
   decimals?: number;
+  base_decimals?: number;
   usd_market_cap?: number;
   created_timestamp?: number;
 };
@@ -202,12 +206,40 @@ function mapPump(coin: PumpCoin, verified = false): ListedToken | null {
     symbol: coin.symbol?.trim() || "TOKEN",
     name: coin.name?.trim() || "Token",
     mint: coin.mint,
-    decimals: typeof coin.decimals === "number" ? coin.decimals : 6,
+    decimals: typeof coin.decimals === "number" ? coin.decimals : coin.base_decimals ?? 6,
     image: tokenImage(coin.mint, coin.image_uri),
     verified,
     ...(marketCap ? { marketCap } : {}),
     ...(createdMs(coin.created_timestamp) ? { createdAt: createdMs(coin.created_timestamp) } : {}),
   };
+}
+
+async function searchJupiter(query: string): Promise<JupiterToken[]> {
+  const key = query.trim().toLowerCase();
+  const hit = searchCache.get(key);
+  if (hit && Date.now() - hit.at < 30_000) return hit.tokens;
+  try {
+    const response = await fetch(`${LITE_SEARCH}${encodeURIComponent(query.trim())}`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) return hit?.tokens ?? [];
+    const body = (await response.json()) as JupiterToken[];
+    const tokens = Array.isArray(body) ? body : [];
+    searchCache.set(key, { at: Date.now(), tokens });
+    return tokens;
+  } catch {
+    return hit?.tokens ?? [];
+  }
+}
+
+function matchesQuery(token: { symbol?: string; name?: string; id?: string }, lowered: string) {
+  return (
+    token.symbol?.toLowerCase().includes(lowered) ||
+    token.name?.toLowerCase().includes(lowered) ||
+    token.id?.toLowerCase().startsWith(lowered)
+  );
 }
 
 async function loadFreshPump(query: string): Promise<ListedToken[]> {
@@ -236,7 +268,7 @@ async function loadFreshPump(query: string): Promise<ListedToken[]> {
 
 async function readPumpCoin(mint: string): Promise<ListedToken | null> {
   try {
-    const response = await fetch(`${PUMP_URL}/${mint}`, { headers: PUMP_HEADERS, cache: "no-store", signal: AbortSignal.timeout(4000) });
+    const response = await fetch(`${PUMP_COIN_URL}/${mint}`, { headers: PUMP_HEADERS, cache: "no-store", signal: AbortSignal.timeout(4000) });
     if (!response.ok) return null;
     const body = (await response.json()) as PumpCoin;
     return mapPump(body);
@@ -274,6 +306,44 @@ async function imageFromUri(uri: string): Promise<string | undefined> {
   }
 }
 
+const TOKEN_METADATA = 19;
+const MINT_HEADER = 165;
+
+async function readEmbeddedMint(mint: string, data: Uint8Array): Promise<ListedToken | null> {
+  const fields = readToken2022Metadata(data);
+  if (!fields) return null;
+  return {
+    symbol: fields.symbol || "TOKEN",
+    name: fields.name || "Token",
+    mint,
+    decimals: data[44] ?? 6,
+    image: (await imageFromUri(fields.uri)) ?? (mint.endsWith("pump") ? `https://images.pump.fun/coin-image/${mint}` : undefined),
+    verified: false,
+  };
+}
+
+function readToken2022Metadata(data: Uint8Array): { name: string; symbol: string; uri: string } | null {
+  if (data.length <= MINT_HEADER + 1 || data[MINT_HEADER] !== 1) return null;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let offset = MINT_HEADER + 1;
+  while (offset + 4 <= data.length) {
+    const type = view.getUint16(offset, true);
+    const length = view.getUint16(offset + 2, true);
+    const start = offset + 4;
+    if (length > data.length || start + length > data.length) return null;
+    if (type === TOKEN_METADATA) {
+      let cursor = start + 64;
+      const [name, afterName] = readBorshString(data, cursor);
+      const [symbol, afterSymbol] = readBorshString(data, afterName);
+      const [uri] = readBorshString(data, afterSymbol);
+      if (!name && !symbol) return null;
+      return { name, symbol, uri };
+    }
+    offset = start + length;
+  }
+  return null;
+}
+
 export async function readMint(mint: string): Promise<ListedToken | null> {
   try {
     const mintKey = new PublicKey(mint);
@@ -285,7 +355,7 @@ export async function readMint(mint: string): Promise<ListedToken | null> {
       connection.getAccountInfo(metadata),
       connection.getAccountInfo(mintKey),
     ]);
-    if (!meta?.data) return null;
+    if (!meta?.data) return account?.data ? readEmbeddedMint(mint, account.data) : null;
     let offset = 1 + 32 + 32;
     const [name, afterName] = readBorshString(meta.data, offset);
     const [symbol, afterSymbol] = readBorshString(meta.data, afterName);
@@ -302,6 +372,32 @@ export async function readMint(mint: string): Promise<ListedToken | null> {
   } catch {
     return null;
   }
+}
+
+const described = new Map<string, { at: number; token: ListedToken | null }>();
+
+function namedToken(token: ListedToken | null): token is ListedToken {
+  return Boolean(token && (token.symbol !== "TOKEN" || token.name !== "Token"));
+}
+
+async function describeMint(mint: string): Promise<ListedToken | null> {
+  const hit = described.get(mint);
+  if (hit && Date.now() - hit.at < (hit.token ? 10 * 60_000 : 20_000)) return hit.token;
+  const launched = await readPumpCoin(mint);
+  const onChain = namedToken(launched) ? null : await readMint(mint);
+  const token = namedToken(onChain) ? onChain : launched ?? onChain;
+  described.set(mint, { at: Date.now(), token });
+  return token;
+}
+
+export async function describeMints(mints: string[]): Promise<ListedToken[]> {
+  const unique = [...new Set(mints.map((mint) => mint.trim()).filter((mint) => isMint(mint)))].slice(0, 24);
+  const tokens: ListedToken[] = [];
+  for (let index = 0; index < unique.length; index += 6) {
+    const chunk = await Promise.all(unique.slice(index, index + 6).map(describeMint));
+    for (const token of chunk) if (token) tokens.push(token);
+  }
+  return tokens;
 }
 
 async function resolveMint(mint: string, scope: "pump" | "verified" | "equities"): Promise<ListedToken | null> {
@@ -346,10 +442,15 @@ export async function searchTokens(query: string, scope: "pump" | "verified" | "
   }
 
   let verified: JupiterToken[] = [];
+  let searched: JupiterToken[] = [];
   try {
-    verified = await loadVerified();
+    [verified, searched] = await Promise.all([
+      loadVerified().catch(() => [] as JupiterToken[]),
+      lowered ? searchJupiter(needle) : Promise.resolve([] as JupiterToken[]),
+    ]);
   } catch {
     verified = [];
+    searched = [];
   }
 
   const pool =
@@ -384,6 +485,16 @@ export async function searchTokens(query: string, scope: "pump" | "verified" | "
     }
   }
   const seen = new Set<string>();
+  const found: ListedToken[] = [];
+  if (lowered) {
+    for (const token of searched) {
+      if (!token.id || seen.has(token.id) || !matchesQuery(token, lowered)) continue;
+      if (scope === "verified" && !token.tags?.includes("verified")) continue;
+      seen.add(token.id);
+      found.push(mapToken(token, Boolean(token.tags?.includes("verified"))));
+      if (found.length >= 40) return found;
+    }
+  }
   const picked: ListedToken[] = [];
   for (const token of fresh) {
     if (seen.has(token.mint)) continue;
@@ -391,7 +502,7 @@ export async function searchTokens(query: string, scope: "pump" | "verified" | "
     picked.push(token);
     if (picked.length >= (lowered ? 16 : 12)) break;
   }
-  const rows: ListedToken[] = await withJupiterMeta(picked);
+  const rows: ListedToken[] = [...found, ...(await withJupiterMeta(picked))];
   for (const token of matches.map((token) => mapToken(token))) {
     if (seen.has(token.mint)) continue;
     seen.add(token.mint);

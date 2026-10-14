@@ -11,7 +11,6 @@ const PAGES: [string, number, MetadataRoute.Sitemap[number]["changeFrequency"]][
   ["/buyback", 0.6, "daily"],
   ["/litepaper", 0.6, "monthly"],
   ["/dashboard", 0.6, "monthly"],
-  ["/waitlist", 0.5, "monthly"],
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {

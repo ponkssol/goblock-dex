@@ -18,11 +18,10 @@ export function SiteFoot() {
             <Link href="/trade">Trade</Link>
             <Link href="/pricing">Pricing</Link>
             <Link href="/buyback">Buyback</Link>
-            <Link href="/waitlist">Waitlist</Link>
-            <Link href="/litepaper">Litepaper</Link>
             <Link href="/dashboard">Dashboard</Link>
             <Link href="/docs">Docs</Link>
             <Link href="/mcp">MCP</Link>
+            <Link href="/litepaper">Litepaper</Link>
           </nav>
         </div>
         <div className="s-foot-bottom" {...m("rise", 100)}>

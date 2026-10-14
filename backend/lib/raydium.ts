@@ -134,7 +134,13 @@ async function compute(
     slippageBps: String(slippageBps),
     txVersion: "V0",
   });
-  const response = await fetch(`https://transaction-v1.raydium.io/compute/swap-base-in?${params}`);
+  let response: Response;
+  try {
+    response = await fetch(`https://transaction-v1.raydium.io/compute/swap-base-in?${params}`);
+  } catch {
+    throw new Error("Could not fetch a Raydium quote.");
+  }
+  if (response.status === 429 || response.status >= 500) throw new Error("Could not fetch a Raydium quote.");
   const body = (await response.json()) as { id?: string; success?: boolean; version?: string; data?: RaydiumData };
   const plan = body.data?.routePlan ?? [];
   if (!response.ok || !body.success || !body.data?.outputAmount || plan.length !== 1) {

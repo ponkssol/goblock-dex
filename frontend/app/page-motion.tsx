@@ -1,25 +1,10 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, type ReactNode } from "react";
 
 export function PageMotion({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const path = usePathname();
-  const frame = useRef<HTMLDivElement>(null);
-  const first = useRef(true);
-
-  useEffect(() => {
-    const node = frame.current;
-    if (!node || first.current) {
-      first.current = false;
-      return;
-    }
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    node.style.animation = "none";
-    void node.offsetWidth;
-    node.style.animation = "";
-  }, [path]);
 
   useEffect(() => {
     const warm = (event: Event) => {
@@ -39,7 +24,7 @@ export function PageMotion({ children }: { children: ReactNode }) {
   }, [router]);
 
   return (
-    <div className="page-motion" ref={frame}>
+    <div className="page-motion">
       {children}
     </div>
   );
